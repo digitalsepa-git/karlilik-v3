@@ -1,0 +1,889 @@
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { useData } from '../context/DataContext';
+import { useGoogleAnalytics } from '../hooks/useGoogleAnalytics';
+import { expensesData, calculateDailyExpense } from '../data/expensesData';
+import {
+    LineChart,
+    Line,
+    XAxis,
+    YAxis,
+    CartesianGrid,
+    Tooltip,
+    ResponsiveContainer,
+    AreaChart,
+    Area
+} from 'recharts';
+import {
+    ArrowUpRight,
+    ArrowDownRight,
+    AlertTriangle,
+    DollarSign,
+    TrendingUp,
+    Percent,
+    FileText,
+    FileSpreadsheet,
+    File,
+    Table,
+    Download,
+    ChevronDown
+} from 'lucide-react';
+import { InventoryInsights } from '../components/dashboard/InventoryInsights';
+import { MarketingPerformance } from '../components/dashboard/MarketingPerformance';
+import { SalesChannelCards } from '../components/dashboard/SalesChannelCards';
+import { TransactionTable } from '../components/dashboard/TransactionTable';
+import { cn } from '../lib/utils';
+const StatCard = ({ title, value, change, icon: Icon, trend }) => (
+    <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex items-center justify-between pb-2">
+            <p className="text-sm font-medium text-slate-500">{title}</p>
+            <div className={cn("p-2 rounded-lg bg-slate-50", trend === 'up' ? "text-emerald-600" : "text-rose-600")}>
+                <Icon className="h-4 w-4" />
+            </div>
+        </div>
+        <div className="flex items-baseline gap-2">
+            <h3 className="text-2xl font-bold text-slate-900">{value}</h3>
+            <span className={cn("flex items-center text-xs font-medium", trend === 'up' ? "text-emerald-600" : "text-rose-600")}>
+                {trend === 'up' ? <ArrowUpRight className="h-3 w-3 mr-1" /> : <ArrowDownRight className="h-3 w-3 mr-1" />}
+                {change}
+            </span>
+        </div>
+    </div>
+);
+
+// Custom Tooltip Component for Sales & Profit Chart
+const CustomTooltip = ({ active, payload, label }) => {
+    if (active && payload && payload.length) {
+        // Payload is ordered by render order (Profit, then Sales).
+        // Reverse it to show "Sales" (the top visual layer) first in the tooltip.
+        const sortedPayload = [...payload].reverse();
+
+        return (
+            <div className="bg-white p-4 rounded-xl shadow-lg border border-gray-50 text-left">
+                {/* Date Header */}
+                <p className="text-sm font-semibold text-gray-900 mb-2">
+                    {new Date(label).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })}
+                </p>
+
+                {/* Data Items */}
+                <div className="space-y-1">
+                    {sortedPayload.map((entry, index) => {
+                        // Determine color based on the name/key
+                        const color = entry.dataKey === 'sales' ? '#6366f1' : '#10b981'; // Indigo for Sales, Emerald for Profit
+
+                        return (
+                            <p key={index} className="text-sm flex items-center gap-2">
+                                {/* Label with chart color */}
+                                <span style={{ color: color, fontWeight: 500 }}>
+                                    {entry.name}:
+                                </span>
+                                {/* Value (Formatted) */}
+                                <span className="font-medium text-gray-700">
+                                    {new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(entry.value)}
+                                </span>
+                            </p>
+                        );
+                    })}
+                </div>
+            </div>
+        );
+    }
+    return null;
+};
+
+export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
+    const [isExportOpen, setIsExportOpen] = useState(false);
+    const exportRef = useRef(null);
+
+    // Fetch live orders & products from global Context
+    const { ordersData, productsData, analyticsData, setGlobalDateRange } = useData();
+    const { orders, loading } = ordersData;
+    const { products, loading: productsLoading } = productsData;
+    const { data: gaData } = analyticsData || {};
+
+    // Also fetch DB Competitors to see active competitive threats
+    const [competitors, setCompetitors] = useState([]);
+    useEffect(() => {
+        fetch('/api/competitors')
+            .then(res => {
+                if (!res.ok) throw new Error("Fallback needed");
+                return res.json();
+            })
+            .then(data => {
+                if (Array.isArray(data)) setCompetitors(data);
+            })
+            .catch(err => {
+                console.warn("Falling back to static Competitors DB on Vercel", err);
+                // Dynamically import fallback to avoid top-level path resolution issues if not used
+                import('../server/competitors.json').then(module => {
+                    const fallback = module.default;
+                    if (Array.isArray(fallback)) setCompetitors(fallback);
+                }).catch(() => { });
+            });
+    }, []);
+
+    // Derive active filter values
+    const activeCategory = filters.category || 'all';
+    const activeChannel = filters.channel || 'all';
+    const activeDateRange = filters.dateRange || 'last30';
+
+    const getDateRangeBounds = (rangeFilter) => {
+        const now = new Date();
+        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+        switch (rangeFilter) {
+            case 'thisMonth':
+                return { start: new Date(now.getFullYear(), now.getMonth(), 1), end: now };
+            case 'lastQuarter': {
+                const m = now.getMonth();
+                let startMonth, year = now.getFullYear();
+                if (m === 11 || m === 0 || m === 1) { startMonth = 11; if (m !== 11) year -= 1; }
+                else if (m >= 2 && m <= 4) startMonth = 2;
+                else if (m >= 5 && m <= 7) startMonth = 5;
+                else startMonth = 8;
+                return { start: new Date(year, startMonth, 1), end: now };
+            }
+            case 'thisYear':
+                return { start: new Date(now.getFullYear(), 0, 1), end: now };
+            default:
+                if (rangeFilter && rangeFilter.startsWith('custom:')) {
+                    const parts = rangeFilter.split(':');
+                    return { start: new Date(parts[1] + 'T00:00:00Z'), end: new Date(parts[2] + 'T23:59:59.999Z') };
+                }
+                return { start: new Date(startOfDay.getTime() - 29 * 24 * 60 * 60 * 1000), end: now };
+        }
+    };
+
+    const { start: dateStart, end: dateEnd } = useMemo(() => getDateRangeBounds(activeDateRange), [activeDateRange]);
+
+    useEffect(() => {
+        setGlobalDateRange({
+            startDate: dateStart.toISOString().split('T')[0],
+            endDate: dateEnd.toISOString().split('T')[0]
+        });
+    }, [dateStart, dateEnd, setGlobalDateRange]);
+
+    // Filtered real orders
+    const filteredOrders = useMemo(() => {
+        return orders.filter(tx => {
+            if (tx.dateRaw < dateStart || tx.dateRaw > dateEnd) return false;
+
+            const activeChLower = activeChannel?.toLowerCase() || 'all';
+            const txChLower = tx.channel?.toLowerCase() || '';
+
+            const chMatch = activeChLower === 'all' ||
+                txChLower === activeChLower ||
+                (activeChLower === 'web' && txChLower.includes('ikas'));
+
+            const catMatch = activeCategory === 'all' || tx.category === activeCategory;
+            return chMatch && catMatch;
+        });
+    }, [orders, activeChannel, activeCategory, activeDateRange]);
+
+    // Calculate difference in days to prorate expenses
+    const diffDays = useMemo(() => {
+        return Math.max(1, Math.ceil((dateEnd - dateStart) / (1000 * 60 * 60 * 24)));
+    }, [dateStart, dateEnd]);
+
+    const proratedFixedCost = useMemo(() => {
+        // Frekans dinamigine gore gunluk periyotlara bolunen dogru sabit giderin hesaplanmasi (Vergi ve Krediler haric)
+        const dailyFixed = expensesData
+            .filter(e => e.valueType === 'amount' && e.category !== 'tax' && e.category !== 'finance')
+            .reduce((sum, e) => sum + calculateDailyExpense(e), 0);
+        return dailyFixed * diffDays;
+    }, [diffDays]);
+
+    const proratedTaxAndFinance = useMemo(() => {
+        const dailyFinanceAndTax = expensesData
+            .filter(e => e.valueType === 'amount' && (e.category === 'tax' || e.category === 'finance'))
+            .reduce((sum, e) => sum + calculateDailyExpense(e), 0);
+        return dailyFinanceAndTax * diffDays;
+    }, [diffDays]);
+
+    // KPI totals from filtered real orders
+    const totals = useMemo(() => {
+        const aggr = filteredOrders.reduce((acc, order) => {
+            acc.revenue += order.revenue || 0;
+            acc.cogs += order.cogs || 0;
+            acc.shipping += order.shipping || 0;
+            acc.commission += order.commission || 0;
+            acc.tax += order.tax || 0;
+            return acc;
+        }, { revenue: 0, cogs: 0, shipping: 0, commission: 0, tax: 0 });
+
+        aggr.adSpend = gaData?.totalAdCost || 0;
+        aggr.fixedCost = proratedFixedCost;
+        aggr.taxAndAmort = proratedTaxAndFinance;
+
+        return aggr;
+    }, [filteredOrders, gaData, proratedFixedCost, proratedTaxAndFinance]);
+
+    // Derived KPIs
+    const totalCosts = totals.cogs + totals.adSpend + totals.shipping + totals.commission + totals.tax + totals.fixedCost + totals.taxAndAmort;
+    const netProfit = totals.revenue - totalCosts;
+    // FAVÖK (EBITDA), Net Kar'a Vergi (KDV dahil), Amortisman ve Faizin geri eklenmesiyle bulunur.
+    const ebitda = netProfit + totals.taxAndAmort + totals.tax;
+    const roi = totalCosts > 0 ? (netProfit / totalCosts) * 100 : 0;
+
+    const fmt = (v) => {
+        if (Math.abs(v) >= 1000000) return `₺${(v / 1000000).toFixed(1)}M`;
+        if (Math.abs(v) >= 1000) return `₺${Math.round(v / 1000)}K`;
+        return `₺${Math.round(v)}`;
+    };
+
+    const grossMarginPct = totals.revenue > 0 ? ((totals.revenue - totals.cogs) / totals.revenue) * 100 : 0;
+    const ebitdaMarginPct = totals.revenue > 0 ? (ebitda / totals.revenue) * 100 : 0;
+    const netMarginPct = totals.revenue > 0 ? (netProfit / totals.revenue) * 100 : 0;
+
+    // -- PREVIOUS PERIOD COMPARISON --
+    const { prevStart, prevEnd } = useMemo(() => {
+        const pEnd = new Date(dateStart);
+        pEnd.setDate(pEnd.getDate() - 1);
+        pEnd.setHours(23, 59, 59, 999);
+        const pStart = new Date(pEnd);
+        pStart.setDate(pStart.getDate() - diffDays + 1);
+        pStart.setHours(0, 0, 0, 0);
+        return { prevStart: pStart, prevEnd: pEnd };
+    }, [dateStart, diffDays]);
+
+    const prevStartDateStr = prevStart ? prevStart.toISOString().split('T')[0] : null;
+    const prevEndDateStr = prevEnd ? prevEnd.toISOString().split('T')[0] : null;
+
+    // Fetch 100% EXACT historical ad spend from Google API instead of estimating
+    const { data: prevGaData } = useGoogleAnalytics(prevStartDateStr, prevEndDateStr);
+
+    const prevFilteredOrders = useMemo(() => {
+        return orders.filter(tx => {
+            if (tx.dateRaw < prevStart || tx.dateRaw > prevEnd) return false;
+            const activeChLower = activeChannel?.toLowerCase() || 'all';
+            const txChLower = tx.channel?.toLowerCase() || '';
+            const chMatch = activeChLower === 'all' || txChLower === activeChLower || (activeChLower === 'web' && txChLower.includes('ikas'));
+            const catMatch = activeCategory === 'all' || tx.category === activeCategory;
+            return chMatch && catMatch;
+        });
+    }, [orders, activeChannel, activeCategory, prevStart, prevEnd]);
+
+    const prevTotals = useMemo(() => {
+        const aggr = prevFilteredOrders.reduce((acc, order) => {
+            acc.revenue += order.revenue || 0;
+            acc.cogs += order.cogs || 0;
+            acc.shipping += order.shipping || 0;
+            acc.commission += order.commission || 0;
+            acc.tax += order.tax || 0;
+            return acc;
+        }, { revenue: 0, cogs: 0, shipping: 0, commission: 0, tax: 0 });
+
+        // Exact previous ad spend from API
+        aggr.adSpend = prevGaData?.totalAdCost || 0;
+        aggr.fixedCost = proratedFixedCost;
+        aggr.taxAndAmort = proratedTaxAndFinance;
+        return aggr;
+    }, [prevFilteredOrders, prevGaData, proratedFixedCost, proratedTaxAndFinance]);
+
+    const prevTotalCosts = prevTotals.cogs + prevTotals.adSpend + prevTotals.shipping + prevTotals.commission + prevTotals.tax + prevTotals.fixedCost + prevTotals.taxAndAmort;
+    const prevNetProfit = prevTotals.revenue - prevTotalCosts;
+    const prevEbitda = prevNetProfit + prevTotals.taxAndAmort + prevTotals.tax;
+    const prevRoi = prevTotalCosts > 0 ? (prevNetProfit / prevTotalCosts) * 100 : 0;
+
+    const getTrend = (current, prev, isPoints = false) => {
+        if (!prev) return { text: "Yeni Veri", trend: "neutral" };
+        const diff = current - prev;
+        const pct = isPoints ? diff : (diff / Math.abs(prev)) * 100;
+        const sign = diff > 0 ? "+" : "";
+        const trend = diff > 0 ? "up" : diff < 0 ? "down" : "neutral";
+        const unit = isPoints ? " Puan" : "%";
+
+        // Display exactly the previous absolute value so the user sees 100% of the data representation
+        const prevValueText = isPoints ? `${prev.toFixed(1)}%` : fmt(prev);
+        return {
+            text: `${sign}${isPoints ? pct.toFixed(1) : Math.abs(pct).toFixed(1)}${unit} (vs ${prevValueText})`,
+            trend
+        };
+    };
+
+    useEffect(() => {
+        console.group('📉 DÖNEM KARŞILAŞTIRMALI VERİ İFŞASI (100% İSPAT)');
+        console.log('=== ŞU ANKİ DÖNEM ===');
+        console.log(`Tarih: ${dateStart.toISOString().split('T')[0]} / ${dateEnd.toISOString().split('T')[0]}`);
+        console.log(`Ciro: ₺${totals.revenue.toFixed(2)}`);
+        console.log(`COGS (Maliyet): ₺${totals.cogs.toFixed(2)}`);
+        console.log(`Reklam (Google API): ₺${totals.adSpend.toFixed(2)}`);
+        console.log(`Komisyon + Kargo: ₺${(totals.commission + totals.shipping).toFixed(2)}`);
+        console.log(`Sabit Gider + Vergi: ₺${(totals.fixedCost + totals.taxAndAmort).toFixed(2)}`);
+        console.log(` NET KÂR: ₺${netProfit.toFixed(2)}`);
+
+        console.log('=== ÖNCEKİ DÖNEM ===');
+        console.log(`Tarih: ${prevStartDateStr} / ${prevEndDateStr}`);
+        console.log(`Ciro: ₺${prevTotals.revenue.toFixed(2)}`);
+        console.log(`COGS (Maliyet): ₺${prevTotals.cogs.toFixed(2)}`);
+        console.log(`Reklam (Google API): ₺${prevTotals.adSpend.toFixed(2)}`);
+        console.log(`Komisyon + Kargo: ₺${(prevTotals.commission + prevTotals.shipping).toFixed(2)}`);
+        console.log(`Sabit Gider + Vergi: ₺${(prevTotals.fixedCost + prevTotals.taxAndAmort).toFixed(2)}`);
+        console.log(` NET KÂR: ₺${prevNetProfit.toFixed(2)}`);
+        console.groupEnd();
+    }, [dateStart, dateEnd, prevStartDateStr, prevEndDateStr, totals, prevTotals, netProfit, prevNetProfit]);
+
+    const revTrend = getTrend(totals.revenue, prevTotals.revenue);
+    const profitTrend = getTrend(netProfit, prevNetProfit);
+    const ebitdaTrend = getTrend(ebitda, prevEbitda);
+    const roiTrend = getTrend(roi, prevRoi, true);
+
+    // ABC (Activity-Based Costing) Overhead Distribution Rates
+    const abcRates = useMemo(() => {
+        // MUST use the true DATE-RANGE base to calculate the burden denominators!
+        // Otherwise, filtering to 1 channel dumps 100% of the rent onto that 1 channel's limited orders.
+        const baseOrders = orders.filter(tx => tx.dateRaw >= dateStart && tx.dateRaw <= dateEnd);
+
+        const totalRev = baseOrders.reduce((sum, o) => sum + (o.revenue || 0), 0) || 1;
+
+        const channelRev = {};
+        const categoryRev = {};
+        baseOrders.forEach(o => {
+            const chLower = (o.channel || '').toLowerCase();
+            const catLower = (o.category || '').toLowerCase();
+            channelRev[chLower] = (channelRev[chLower] || 0) + (o.revenue || 0);
+            categoryRev[catLower] = (categoryRev[catLower] || 0) + (o.revenue || 0);
+        });
+
+        const totalAdSpend = gaData?.totalAdCost || 0;
+        const totalWebRev = baseOrders.filter(o => {
+            const ch = (o.channel || '').toLowerCase();
+            return ch.includes('web') || ch.includes('ikas');
+        }).reduce((sum, o) => sum + (o.revenue || 0), 0) || 1;
+        const webAdSpendRate = totalAdSpend / totalWebRev;
+
+        const globalFixedPool = expensesData
+            .filter(e => !e.allocationScope || e.allocationScope.type === 'global')
+            .reduce((sum, e) => sum + calculateDailyExpense(e), 0) * diffDays;
+        const globalFixedRate = globalFixedPool / totalRev;
+
+        const channelBurdenRates = {};
+        const categoryBurdenRates = {};
+
+        expensesData.filter(e => e.allocationScope && e.allocationScope.type !== 'global').forEach(e => {
+            const totalCostForPeriod = calculateDailyExpense(e) * diffDays;
+            if (e.allocationScope.type === 'channel') {
+                const targetCh = (e.allocationScope.target || '').toLowerCase();
+                const pool = channelRev[targetCh] || 1;
+                channelBurdenRates[targetCh] = (channelBurdenRates[targetCh] || 0) + (totalCostForPeriod / pool);
+            } else if (e.allocationScope.type === 'category') {
+                const targetCat = (e.allocationScope.target || '').toLowerCase();
+                const pool = categoryRev[targetCat] || 1;
+                categoryBurdenRates[targetCat] = (categoryBurdenRates[targetCat] || 0) + (totalCostForPeriod / pool);
+            }
+        });
+
+        return { webAdSpendRate, globalFixedRate, channelBurdenRates, categoryBurdenRates };
+    }, [orders, dateStart, dateEnd, diffDays, gaData, expensesData]);
+
+    const abcDecoratedOrders = useMemo(() => {
+        const { webAdSpendRate, globalFixedRate, channelBurdenRates, categoryBurdenRates } = abcRates;
+        const fmC = (v) => `₺${Math.abs(Math.round(v)).toLocaleString('tr-TR')}`;
+
+        return filteredOrders.map(order => {
+            const chLower = (order.channel || '').toLowerCase();
+            const catLower = (order.category || '').toLowerCase();
+
+            // Direct costs strictly parsed from useOrders.js source of truth
+            const commissionCost = order.commission || 0;
+            const shippingCost = order.shipping || 0;
+            const cogs = order.cogs || 0;
+            const tax = order.tax || 0;
+            const directCost = cogs + shippingCost + commissionCost + tax;
+
+            const orderRevenue = order.revenue || 0;
+            const isWeb = chLower.includes('web') || chLower.includes('ikas');
+            const adSpendBurden = isWeb ? (orderRevenue * webAdSpendRate) : 0;
+            const globalFixedBurden = orderRevenue * globalFixedRate;
+            const customChannelBurden = orderRevenue * (channelBurdenRates[chLower] || 0);
+            const customCategoryBurden = orderRevenue * (categoryBurdenRates[catLower] || 0);
+            const indirectOverhead = adSpendBurden + globalFixedBurden + customChannelBurden + customCategoryBurden;
+
+            const totalBurdenAndCosts = directCost + indirectOverhead;
+            const netProfit = orderRevenue - totalBurdenAndCosts;
+
+            const tooltipEl = (
+                <div className="flex flex-col gap-1.5 w-full min-w-[210px] text-left">
+                    <div className="flex justify-between text-slate-200 font-bold border-b border-slate-600 pb-1.5 mb-1.5">
+                        <span>Brüt Maliyet ({fmC(directCost)})</span>
+                    </div>
+                    <div className="flex justify-between items-center"><span className="text-slate-400">Ürün / Alış (COGS)</span><span className="font-medium text-slate-100">{fmC(cogs)}</span></div>
+                    <div className="flex justify-between items-center"><span className="text-slate-400">Kargo</span><span className="font-medium text-slate-100">{fmC(shippingCost)}</span></div>
+                    <div className="flex justify-between items-center"><span className="text-slate-400">Pazaryeri Kom.</span><span className="font-medium text-slate-100">{fmC(commissionCost)}</span></div>
+                    <div className="flex justify-between items-center"><span className="text-slate-400">KDV Ödemesi (Net)</span><span className="font-medium text-rose-300">{fmC(tax)}</span></div>
+
+                    <div className="flex justify-between text-amber-300 font-bold border-b border-slate-600 pb-1.5 mt-2.5 mb-1.5 pt-1">
+                        <span>ABC Tali Gider Payı</span>
+                        <span>{fmC(indirectOverhead)}</span>
+                    </div>
+                    <div className="flex justify-between items-center"><span className="text-slate-400">Genel Gider + Maaş</span><span className="font-medium text-amber-50">{fmC(globalFixedBurden)}</span></div>
+                    {isWeb && <div className="flex justify-between items-center"><span className="text-slate-400">Reklam (GA - Web)</span><span className="font-medium text-amber-50">{fmC(adSpendBurden)}</span></div>}
+                    {customChannelBurden > 0 && <div className="flex justify-between items-center"><span className="text-slate-400">Kanal Özel Gideri</span><span className="font-medium text-amber-50">{fmC(customChannelBurden)}</span></div>}
+                    {customCategoryBurden > 0 && <div className="flex justify-between items-center"><span className="text-slate-400">Kategori Kampanyası</span><span className="font-medium text-amber-50">{fmC(customCategoryBurden)}</span></div>}
+                </div>
+            );
+
+            return {
+                ...order,
+                cost: Math.round(totalBurdenAndCosts), // override cost to include EVERYTHING
+                directCost: Math.round(directCost),
+                indirectCost: Math.round(indirectOverhead),
+                grossProfit: orderRevenue - directCost,
+                profit: netProfit, // override profit mathematically
+                costBreakdown: tooltipEl // Rich React node instead of string
+            };
+        });
+    }, [filteredOrders, abcRates]);
+
+    // Chart data — Aggregate daily orders explicitly based on REAL data points
+    // Integrated with Activity-Based Costing (ABC) for mathematically truthful Net Profit
+    const chartData = useMemo(() => {
+        if (!filteredOrders.length) return [];
+
+        const dayMap = {};
+        const { webAdSpendRate, globalFixedRate, channelBurdenRates, categoryBurdenRates } = abcRates;
+
+        let curr = new Date(dateStart);
+        while (curr <= dateEnd) {
+            const dateStr = curr.toISOString().split('T')[0];
+            dayMap[dateStr] = { date: dateStr, sales: 0, profit: 0, count: 0 };
+            curr.setDate(curr.getDate() + 1);
+        }
+
+        // 4. Trace Orders and apply direct costs + ABC indirect overhead
+        filteredOrders.forEach(order => {
+            const dateStr = order.dateRaw.toISOString().split('T')[0];
+            if (dayMap[dateStr]) {
+                dayMap[dateStr].sales += order.revenue;
+
+                const chLower = (order.channel || '').toLowerCase();
+                const catLower = (order.category || '').toLowerCase();
+
+                const commissionCost = order.commission || 0;
+                const shippingCost = order.shipping || 0;
+                const cogs = order.cogs || 0;
+                const tax = order.tax || 0;
+
+                const orderRevenue = order.revenue || 0;
+                const isWeb = chLower.includes('web') || chLower.includes('ikas');
+                const adSpendBurden = isWeb ? (orderRevenue * webAdSpendRate) : 0;
+                const globalFixedBurden = orderRevenue * globalFixedRate;
+                const customChannelBurden = orderRevenue * (channelBurdenRates[chLower] || 0);
+                const customCategoryBurden = orderRevenue * (categoryBurdenRates[catLower] || 0);
+
+                const totalBurdenAndCosts = cogs + shippingCost + commissionCost + tax + adSpendBurden + globalFixedBurden + customChannelBurden + customCategoryBurden;
+
+                dayMap[dateStr].profit += (orderRevenue - totalBurdenAndCosts);
+                dayMap[dateStr].count += 1;
+            }
+        });
+
+        return Object.values(dayMap);
+    }, [filteredOrders, abcRates, dateStart, dateEnd]);
+
+    // Filtered ALERTS (Rekabet Ozeti) - uses real products and competitors
+    const filteredAlerts = useMemo(() => {
+        if (!products || products.length === 0 || !competitors || competitors.length === 0) return [];
+
+        return products
+            .filter(p => {
+                const categoryMatch = activeCategory === 'all' || p.categoryIds?.includes(activeCategory);
+                return activeCategory === 'all' ? true : categoryMatch;
+            })
+            .map(p => {
+                const myPrice = p.price || 0;
+                const productCompetitors = competitors.filter(c => c.productId === p.id);
+                if (productCompetitors.length === 0) return null;
+
+                const cheapestComp = productCompetitors.reduce((min, cur) => cur.price < min.price ? cur : min);
+
+                if (myPrice > cheapestComp.price) {
+                    return {
+                        id: p.id,
+                        product: p.name,
+                        myPrice: myPrice,
+                        competitorPrice: cheapestComp.price,
+                        competitor: cheapestComp.source || 'Rakip',
+                        badge: 'Buybox Riski',
+                        badgeColor: 'text-rose-600',
+                        badgeBg: 'bg-rose-50'
+                    };
+                }
+                return null;
+            })
+            .filter(Boolean)
+            .slice(0, 5);
+    }, [products, competitors, activeCategory]);
+
+    const hasActiveFilter = activeCategory !== 'all' || activeChannel !== 'all' || activeDateRange !== 'last30';
+
+    // Close dropdown when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (exportRef.current && !exportRef.current.contains(event.target)) {
+                setIsExportOpen(false);
+            }
+        };
+
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, []);
+
+    // Fix #6: Real CSV export from orders data
+    const handleExport = (type) => {
+        if (type === 'csv') {
+            const channelMap = {};
+            orders.forEach(o => {
+                const ch = o.channel || 'Web';
+                if (!channelMap[ch]) channelMap[ch] = { revenue: 0, units: 0, commission: 0, cogs: 0 };
+                channelMap[ch].revenue += (o.revenue || 0);
+                channelMap[ch].units += 1;
+                channelMap[ch].commission += (o.revenue || 0) * 0.15; // default 15% sim
+                channelMap[ch].cogs += (o.cost || 0);
+            });
+            const headers = ['Kanal', 'Toplam Ciro (₺)', 'Birim Satış', 'Toplam Komisyon (₺)', 'Tahmini Net Gelir (₺)'];
+            const rows = Object.entries(channelMap).map(([name, s]) => [
+                `"${name}"`,
+                Math.round(s.revenue),
+                s.units,
+                Math.round(s.commission),
+                Math.round(s.revenue - s.commission - s.cogs)
+            ]);
+            const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+            const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `kanal_ozet_${new Date().toISOString().slice(0, 10)}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } else {
+            alert(`"${type.toUpperCase()}" formatı yakında aktif olacak. Şimdilik CSV kullanabilirsiniz.`);
+        }
+        setIsExportOpen(false);
+    };
+
+    return (
+        <div className="space-y-6">
+            <div className="flex items-center justify-between">
+                <h1 className="text-2xl font-bold text-slate-900">{t.title}</h1>
+
+                {/* Export Dropdown */}
+                <div className="relative" ref={exportRef}>
+                    <button
+                        onClick={() => setIsExportOpen(!isExportOpen)}
+                        className={cn(
+                            "px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition flex items-center gap-2",
+                            isExportOpen && "bg-indigo-700 ring-2 ring-indigo-200 ring-offset-1"
+                        )}
+                    >
+                        <Download className="h-4 w-4" />
+                        {t.download}
+                        <ChevronDown className={cn("h-4 w-4 transition-transform duration-200", isExportOpen ? "rotate-180" : "")} />
+                    </button>
+
+                    {/* Dropdown Menu */}
+                    {isExportOpen && (
+                        <div className="absolute top-full right-0 mt-2 w-64 bg-white rounded-xl shadow-xl border border-slate-100 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top-right">
+                            <div className="py-1">
+                                <button
+                                    onClick={() => handleExport('csv')}
+                                    className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors text-left group"
+                                >
+                                    <div className="p-2 rounded-lg bg-slate-50 text-slate-500 group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors">
+                                        <FileText className="h-4 w-4" />
+                                    </div>
+                                    <span className="font-medium">CSV İndir</span>
+                                </button>
+                                <button
+                                    onClick={() => handleExport('excel')}
+                                    className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors text-left group border-t border-slate-50"
+                                >
+                                    <div className="p-2 rounded-lg bg-slate-50 text-slate-500 group-hover:bg-green-100 group-hover:text-green-600 transition-colors">
+                                        <FileSpreadsheet className="h-4 w-4" />
+                                    </div>
+                                    <span className="font-medium">Excel Olarak İndir (.xlsx)</span>
+                                </button>
+                                <button
+                                    onClick={() => handleExport('pdf')}
+                                    className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors text-left group border-t border-slate-50"
+                                >
+                                    <div className="p-2 rounded-lg bg-slate-50 text-slate-500 group-hover:bg-rose-100 group-hover:text-rose-600 transition-colors">
+                                        <File className="h-4 w-4" />
+                                    </div>
+                                    <span className="font-medium">PDF Raporu</span>
+                                </button>
+                                <button
+                                    onClick={() => handleExport('sheets')}
+                                    className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors text-left group border-t border-slate-50"
+                                >
+                                    <div className="p-2 rounded-lg bg-slate-50 text-slate-500 group-hover:bg-emerald-100 group-hover:text-emerald-600 transition-colors">
+                                        <Table className="h-4 w-4" />
+                                    </div>
+                                    <span className="font-medium">E-Tablolara Aktar</span>
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+
+            {/* Active filter badges */}
+            {hasActiveFilter && (
+                <div className="flex items-center gap-2 flex-wrap">
+                    {activeDateRange !== 'last30' && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700 border border-indigo-200">
+                            📅 {{ thisMonth: 'Bu Ay', lastQuarter: 'Son Çeyrek', thisYear: 'Bu Yıl' }[activeDateRange] || 'Özel Aralık'}
+                        </span>
+                    )}
+                    {activeCategory !== 'all' && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200">
+                            📌 {activeCategory}
+                        </span>
+                    )}
+                    {activeChannel !== 'all' && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-700 border border-orange-200">
+                            🛍 {activeChannel}
+                        </span>
+                    )}
+                    <span className="text-xs text-slate-400">({filteredOrders.length} işlem alındı)</span>
+                </div>
+            )}
+
+            {/* KPI Cards — computed from filtered products & historical period comparison */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <StatCard
+                    title={t.netSales}
+                    value={fmt(totals.revenue)}
+                    change={revTrend.text}
+                    icon={DollarSign}
+                    trend={revTrend.trend}
+                />
+                <StatCard
+                    title={t.netProfit}
+                    value={fmt(netProfit)}
+                    change={profitTrend.text}
+                    icon={TrendingUp}
+                    trend={profitTrend.trend}
+                />
+                <StatCard
+                    title={t.ebitda}
+                    value={fmt(ebitda)}
+                    change={ebitdaTrend.text}
+                    icon={DollarSign}
+                    trend={ebitdaTrend.trend}
+                />
+                <StatCard
+                    title={t.roi}
+                    value={`${roi.toFixed(1)}%`}
+                    change={roiTrend.text}
+                    icon={Percent}
+                    trend={roiTrend.trend}
+                />
+            </div>
+
+            {/* Sales & Profit Chart — filtered data */}
+            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h3 className="text-lg font-semibold text-slate-900 mb-6">{t.salesVsProfit}</h3>
+                <div className="h-[350px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={chartData}>
+                            <defs>
+                                <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.15} />
+                                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                                </linearGradient>
+                                <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.15} />
+                                    <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                                </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                            <XAxis
+                                dataKey="date"
+                                tickFormatter={(str) => new Date(str).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })}
+                                tick={{ fill: '#9ca3af', fontSize: 12 }}
+                                tickLine={false}
+                                axisLine={false}
+                                tickMargin={10}
+                                interval={6}
+                                dy={10}
+                            />
+                            <YAxis
+                                tick={{ fill: '#9ca3af', fontSize: 12 }}
+                                tickLine={false}
+                                axisLine={false}
+                                tickFormatter={(value) => `₺${value}`}
+                            />
+                            <Tooltip
+                                content={<CustomTooltip />}
+                                cursor={{ stroke: '#e5e7eb', strokeWidth: 1, strokeDasharray: '4 4' }}
+                            />
+                            <Area
+                                type="monotone"
+                                dataKey="profit"
+                                stroke="#10b981"
+                                strokeWidth={2}
+                                fillOpacity={1}
+                                fill="url(#colorProfit)"
+                                name="Net Kar"
+                                dot={false}
+                                activeDot={{ r: 6, strokeWidth: 4, stroke: '#ffffff' }}
+                            />
+                            <Area
+                                type="monotone"
+                                dataKey="sales"
+                                stroke="#6366f1"
+                                strokeWidth={2}
+                                fillOpacity={1}
+                                fill="url(#colorSales)"
+                                name="Toplam Satış"
+                                dot={false}
+                                activeDot={{ r: 6, strokeWidth: 4, stroke: '#ffffff' }}
+                            />
+                        </AreaChart>
+                    </ResponsiveContainer>
+                </div>
+            </div>
+
+            {/* Main Content Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+                {/* Left Col: Marketing */}
+                <div className="space-y-6">
+                    <MarketingPerformance
+                        startDate={dateStart.toISOString().split('T')[0]}
+                        endDate={dateEnd.toISOString().split('T')[0]}
+                    />
+
+                </div>
+
+                {/* Right Col: Inventory & Sales Channels */}
+                <div className="space-y-6">
+                    <InventoryInsights t={t} products={products} orders={orders} />
+
+                </div>
+
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                {/* Rekabet Özeti */}
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col h-full">
+                    <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+                        <h3 className="text-gray-900 font-bold text-sm">Rekabet Özeti</h3>
+                        {/* D7 Fix: Navigate to competition tab instead of dead href */}
+                        <button onClick={() => onNavigate && onNavigate('competition')} className="text-indigo-600 text-xs font-medium hover:text-indigo-800 hover:underline">Tümünü Gör</button>
+                    </div>
+
+                    <div className="p-4 space-y-4 overflow-y-auto max-h-[400px]">
+                        {filteredAlerts.length === 0 ? (
+                            <div className="text-center py-6 text-slate-400">
+                                <p className="text-sm font-medium">Bu filtre için rekabet alarmı yok</p>
+                                <p className="text-xs mt-1">Fiyat avantajı var olan ürün bulunamadı</p>
+                            </div>
+                        ) : filteredAlerts.map((alert) => (
+                            <div key={alert.id} className="flex flex-col gap-2 p-3 bg-white hover:bg-rose-50/50 rounded-lg border border-gray-100 transition-colors">
+                                <p className="text-sm font-bold text-gray-900 leading-tight line-clamp-2">{alert.product}</p>
+
+                                <div className="flex items-center justify-between mt-1">
+                                    <div className="flex flex-col">
+                                        <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-0.5">Sizin Fiyatınız</span>
+                                        <span className="text-sm font-bold text-gray-400 line-through decoration-rose-300">₺{alert.myPrice.toLocaleString('tr-TR')}</span>
+                                    </div>
+
+                                    <div className="flex flex-col items-end">
+                                        <span className="text-[10px] text-rose-500 font-bold uppercase tracking-wider mb-0.5" title={alert.competitor}>
+                                            Rakip Fiyatı ({alert.competitor.replace('www.', '').split('.')[0]})
+                                        </span>
+                                        <div className={`flex items-center gap-1 text-[15px] font-black ${alert.badgeColor}`}>
+                                            ₺{alert.competitorPrice.toLocaleString('tr-TR')}
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"></path></svg>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className={`mt-1 text-xs font-bold px-3 py-1.5 rounded-md w-full text-center ${alert.badgeBg} ${alert.badgeColor} border border-rose-100/50 flex flex-col`}>
+                                    <span>⚠️ Fiyat Avantajı Rakipte!</span>
+                                    <span className="text-[10px] opacity-80 mt-0.5">
+                                        {alert.competitor.replace('www.', '').split('.')[0]} platformunda bu ürünü sizden ₺{(alert.myPrice - alert.competitorPrice).toLocaleString('tr-TR')} daha ucuza satıyorlar.
+                                    </span>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Satış Kanalları */}
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col h-full">
+                    <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+                        <h3 className="text-gray-900 font-bold text-sm">Satış Kanalları ve Performans</h3>
+                        {/* D8 Fix: Replaced dummy ⋯ button with a real navigation link */}
+                        <button onClick={() => onNavigate && onNavigate('reports')} className="text-indigo-600 text-xs font-medium hover:text-indigo-800 hover:underline">Rapor →</button>
+                    </div>
+
+                    {/* Compute channel revenue and unit counts explicitly from filtered orders */}
+                    {(() => {
+                        const CHANNEL_STYLES = {
+                            'Trendyol': { bg: 'bg-orange-50', border: 'border-orange-100', label: 'text-orange-600', labelBorder: 'border-orange-200' },
+                            'Hepsiburada': { bg: 'bg-amber-50/60', border: 'border-amber-100', label: 'text-amber-600', labelBorder: 'border-amber-200' },
+                            'Amazon': { bg: 'bg-yellow-50', border: 'border-yellow-100', label: 'text-yellow-700', labelBorder: 'border-yellow-200' },
+                            'Web Sitesi (ikas)': { bg: 'bg-indigo-50', border: 'border-indigo-100', label: 'text-indigo-600', labelBorder: 'border-indigo-200' },
+                            'Web': { bg: 'bg-indigo-50', border: 'border-indigo-100', label: 'text-indigo-600', labelBorder: 'border-indigo-200' }
+                        };
+                        const channelMap = {};
+                        filteredOrders.forEach(o => {
+                            if (!channelMap[o.channel]) channelMap[o.channel] = { revenue: 0, count: 0 };
+                            channelMap[o.channel].revenue += o.revenue;
+                            channelMap[o.channel].count += 1;
+                        });
+                        const sorted = Object.entries(channelMap)
+                            .sort((a, b) => b[1].revenue - a[1].revenue)
+                            .slice(0, 4);
+                        const fmtK = (v) => v >= 1000 ? `₺${(v / 1000).toFixed(1)}K` : `₺${Math.round(v)}`;
+                        const totalChannelsRevenue = Object.values(channelMap).reduce((sum, ch) => sum + ch.revenue, 0);
+
+                        if (!sorted.length) {
+                            return (
+                                <div className="p-6 text-center text-slate-400 italic text-sm">Satış kanalı verisi bulunamadı.</div>
+                            );
+                        }
+
+                        return (
+                            <div className="p-6 grid grid-cols-2 gap-4">
+                                {sorted.map(([name, s], idx) => {
+                                    const style = CHANNEL_STYLES[name] || { bg: 'bg-gray-50', border: 'border-gray-100', label: 'text-gray-600', labelBorder: 'border-gray-200' };
+                                    // Represent share of total pie, not max channel
+                                    const sharePct = totalChannelsRevenue > 0 ? Math.round((s.revenue / totalChannelsRevenue) * 100) : 0;
+                                    const isTop = idx === 0;
+                                    return (
+                                        <div key={name} className={`${style.bg} rounded-xl p-4 border ${style.border} flex flex-col justify-between`}>
+                                            <div className="flex justify-between items-start mb-2">
+                                                <span className={`text-xs font-bold ${style.label} bg-white border ${style.labelBorder} px-2 py-0.5 rounded`}>{name}</span>
+                                                <span className={`text-[10px] font-bold flex items-center gap-1 ${isTop ? 'text-green-600' : 'text-gray-400'}`}>
+                                                    {isTop ? (
+                                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>
+                                                    ) : null}
+                                                    {isTop ? 'En Yüksek' : `%${sharePct} Pay`}
+                                                </span>
+                                            </div>
+                                            <div>
+                                                <p className="text-2xl font-bold text-gray-900">{fmtK(s.revenue)}</p>
+                                                <p className="text-[10px] text-gray-500 mt-1">{s.count.toLocaleString('tr-TR')} İşlem / Dönem</p>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        );
+                    })()}
+                </div>
+            </div>
+
+            {/* Recent Transactions Table */}
+            <TransactionTable orders={abcDecoratedOrders} loading={loading} filters={filters} />
+        </div>
+    );
+};
+

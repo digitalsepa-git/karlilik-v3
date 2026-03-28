@@ -1,0 +1,9 @@
+{
+    "SKU-240b3f": { "cogs": 540, "shipping": 45 },
+    "SKU-2788ca": { "cogs": 456, "shipping": 45 },
+    "SKU-2f81ca": { "cogs": 624, "shipping": 45 },
+    "SKU-32e48c": { "cogs": 372, "shipping": 45 },
+    "SKU-21bac2": { "cogs": 240, "shipping": 40 },
+    "SKU-36e77e": { "cogs": 420, "shipping": 45 },
+    "DEFAULT": { "cogs": 360, "shipping": 45 }
+}

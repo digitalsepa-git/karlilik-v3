@@ -1,0 +1,41 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# API endpoints → Netlify Functions
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+  force = true
+
+# Ikas Auth → Netlify Serverless Function Proxy
+[[redirects]]
+  from = "/ikas-auth"
+  to = "/.netlify/functions/ikas-auth"
+  status = 200
+  force = true
+
+# Ikas GraphQL API → Netlify Serverless Function Proxy
+[[redirects]]
+  from = "/ikas-api/*"
+  to = "/.netlify/functions/ikas-graphql"
+  status = 200
+  force = true
+
+# Trendyol API → Netlify Serverless Function Proxy
+[[redirects]]
+  from = "/trendyol-api/*"
+  to = "/.netlify/functions/trendyol"
+  status = 200
+  force = true
+
+# SPA fallback - must be LAST
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
