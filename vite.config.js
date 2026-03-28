@@ -28,37 +28,30 @@ function expressPlugin() {
 export default defineConfig({
   plugins: [react(), expressPlugin()],
   server: {
-    port: 4000,
+    port: 8888,
     proxy: {
-      '/ikas-api': {
-        target: 'https://api.myikas.com/api/v1/admin',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/ikas-api/, '')
-      },
+      // Ikas OAuth2 token endpoint
       '/ikas-auth': {
-        target: 'https://gilan11.myikas.com/api/admin/oauth/token',
+        target: 'https://gilan11.myikas.com',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/ikas-auth/, '')
+        rewrite: (path) => '/api/admin/oauth/token',
+        secure: true
       },
+      // Ikas GraphQL API
+      '/ikas-api': {
+        target: 'https://api.myikas.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/ikas-api/, '/api/v1/admin'),
+        secure: true
+      },
+      // Trendyol REST API
       '/trendyol-api': {
         target: 'https://api.trendyol.com',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/trendyol-api/, ''),
-        configure: (proxy, _options) => {
-          proxy.on('proxyReq', (proxyReq, req, _res) => {
-            // Trendyol API STRICTLY requires a specific User-Agent format to bypass Cloudflare
-            proxyReq.setHeader('User-Agent', '931428 - SelfIntegration');
-          });
-        }
-      },
-      '/trendyol-apigw': {
-        target: 'https://apigw.trendyol.com',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/trendyol-apigw/, ''),
-        configure: (proxy, _options) => {
-          proxy.on('proxyReq', (proxyReq, req, _res) => {
-            proxyReq.setHeader('User-Agent', '931428 - SelfIntegration');
-          });
+        secure: true,
+        headers: {
+          'User-Agent': '931428 - SelfIntegration'
         }
       }
     }

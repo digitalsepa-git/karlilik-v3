@@ -3,7 +3,7 @@ import { Database, Banknote, RefreshCw, AlertTriangle, TrendingDown, ArrowRight,
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
 import { cn } from '../lib/utils';
 import { useData } from '../context/DataContext';
-import { getFallbackProductImage } from '../hooks/useOrders';
+import { getFallbackProductImage } from '../hooks/useOrdersLive';
 
 export const InventoryHealth = () => {
     const [activeTab, setActiveTab] = useState('critical');

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getCategoryFromProductName, getFallbackProductImage } from './useOrders';
+import { getCategoryFromProductName, getFallbackProductImage } from './useOrdersLive';
 import fallbackProductsData from '../data/realProducts.json';
 
 export function useIkasProducts() {

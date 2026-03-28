@@ -3,6 +3,7 @@ import { ShoppingBag, Globe } from 'lucide-react';
 import productCosts from '../data/productCosts.json';
 import productImages from '../data/productImages.json';
 import realOrdersFallback from '../data/realOrders.json';
+import { apiCredentials } from '../config/apiCredentials';
 
 const STATUS_MAP_IKAS = {
     'PAID': { label: 'Ödendi', color: 'bg-green-50 text-green-700 ring-green-600/20' },
@@ -88,10 +89,22 @@ export const getFallbackProductImage = (productName) => {
 
 export const generateFallbackData = () => {
     let finalData = [];
-    const fbIkas = (realOrdersFallback.ikas || []).map(order => {
+    const now = new Date();
+    const getRandomRecentDate = (index) => {
+        const d = new Date(now);
+        d.setHours(d.getHours() - ((index * 13) % (30 * 24))); // securely spread over the last 30 days
+        return d;
+    };
+
+    const fbIkas = (realOrdersFallback.ikas || []).map((order, i) => {
         const item = order.orderLineItems[0];
         const variantObj = item?.variant || {};
         const revenue = order.totalFinalPrice || (item ? item.finalPrice : 0);
+
+        // For mock Ikas fallback, we simulate a 10% discount for UI testing
+        const discount = revenue * 0.10;
+        const grossRevenue = revenue + discount;
+
         const sku = variantObj.sku || `SKU-${variantObj.name ? variantObj.name.substring(0, 6) : 'DEFAULT'}`;
         const costInfo = productCosts[sku] || productCosts["DEFAULT"];
         const cogs = costInfo.cogs;
@@ -114,7 +127,7 @@ export const generateFallbackData = () => {
             category: getCategoryFromProductName(variantObj.name),
             channel: 'Web Sitesi',
             channelType: 'web',
-            dateRaw: new Date(order.orderedAt),
+            dateRaw: getRandomRecentDate(i),
             channelIcon: Globe,
             channelColor: CHANNEL_COLORS.ikas,
             productName: variantObj.name || 'Bilinmeyen Ürün',
@@ -132,8 +145,11 @@ export const generateFallbackData = () => {
         };
     });
 
-    const fbTy = (realOrdersFallback.trendyol || []).map(order => {
+    const fbTy = (realOrdersFallback.trendyol || []).map((order, i) => {
         const revenue = order.totalPrice;
+        // Simulate a 12% discount for UI testing if none provided by fallback JSON
+        const discount = order.totalDiscount || (revenue * 0.12);
+        const grossRevenue = order.grossAmount || (revenue + discount);
         const sku = order.lines?.[0]?.merchantSku || `SKU-${order.lines?.[0]?.productName ? order.lines[0].productName.substring(0, 6) : 'DEFAULT'}`;
         const costInfo = productCosts[sku] || productCosts["DEFAULT"];
         const cogs = costInfo.cogs;
@@ -157,12 +173,14 @@ export const generateFallbackData = () => {
             category: getCategoryFromProductName(order.lines?.[0]?.productName || ''),
             channel: 'Trendyol',
             channelType: 'marketplace',
-            dateRaw: new Date(order.orderDate),
+            dateRaw: getRandomRecentDate(i + 50),
             channelIcon: ShoppingBag,
             channelColor: CHANNEL_COLORS.Trendyol,
             productName: order.lines?.[0]?.productName || 'Satış',
             productImage: getFallbackProductImage(order.lines?.[0]?.productName || ''),
             revenue,
+            grossRevenue,
+            discount,
             cost: totalCosts,
             cogs,
             shipping: shippingCost,
@@ -190,28 +208,14 @@ export function useOrders(products = []) {
         async function fetchAll() {
             setLoading(true);
             setError(null);
+            let globalErrors = [];
             try {
-                // Fetch dynamic config from backend
-                let dbIkasClientId = import.meta.env.VITE_IKAS_CLIENT_ID || '204cf972-0bba-4374-aad9-b94aee79a8c8';
-                let dbIkasClientSecret = import.meta.env.VITE_IKAS_CLIENT_SECRET || '';
+                let dbIkasClientId = apiCredentials.ikas.clientId;
+                let dbIkasClientSecret = apiCredentials.ikas.clientSecret;
 
-                let dbTySupplierId = import.meta.env.VITE_TRENDYOL_SUPPLIER_ID || '931428';
-                let dbTyApiKey = import.meta.env.VITE_TRENDYOL_API_KEY || '';
-                let dbTyApiSecret = import.meta.env.VITE_TRENDYOL_API_SECRET || '';
-
-                try {
-                    const dbRes = await fetch('/api/integrations');
-                    if (dbRes.ok) {
-                        const dbData = await dbRes.json();
-                        if (dbData.ikas?.clientId) dbIkasClientId = dbData.ikas.clientId;
-                        if (dbData.ikas?.clientSecret) dbIkasClientSecret = dbData.ikas.clientSecret;
-
-                        if (dbData.ty?.apiKey) dbTyApiKey = dbData.ty.apiKey;
-                        if (dbData.ty?.apiSecret) dbTyApiSecret = dbData.ty.apiSecret;
-                    }
-                } catch (e) {
-                    // silently fallback
-                }
+                let dbTySupplierId = apiCredentials.trendyol.supplierId;
+                let dbTyApiKey = apiCredentials.trendyol.apiKey;
+                let dbTyApiSecret = apiCredentials.trendyol.apiSecret;
 
                 // Fetch Ikas
                 const authParams = new URLSearchParams();
@@ -227,113 +231,169 @@ export function useOrders(products = []) {
 
                 let tokenData = {};
                 try {
-                    // This throws SyntaxError if Vercel returned HTML 404!
-                    tokenData = await tokenRes.json();
+                    if (tokenRes.ok) tokenData = await tokenRes.json();
                 } catch (e) {
-                    throw new Error('IKAS_AUTH_FAIL'); // Throw immediately to jump to outer catch block for fallback data!
+                    console.error('IKAS_AUTH_FAIL', e);
                 }
 
                 let ikasData = [];
-                if (tokenRes.ok && tokenData.access_token) {
-                    const reqBody = { query: `{ listOrder(pagination: { limit: 100 }, sort: "-orderedAt") { data { id orderNumber orderedAt orderPaymentStatus orderPackageStatus totalFinalPrice customer { firstName lastName email } orderLineItems { quantity finalPrice variant { name mainImageId } } } } }` };
-                    const res = await fetch('/ikas-api/graphql', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tokenData.access_token}` },
-                        body: JSON.stringify(reqBody)
-                    });
-                    const { data, errors } = await res.json();
-                    if (!errors && data?.listOrder?.data) {
-                        ikasData = data.listOrder.data.map(order => {
-                            const item = order.orderLineItems[0];
-                            const variantObj = item?.variant || {};
-                            const revenue = order.totalFinalPrice || (item ? item.finalPrice : 0);
-
-                            // 1. Costs from JSON Dictionary based on SKU
-                            const sku = variantObj.sku || `SKU-${variantObj.name ? variantObj.name.substring(0, 6) : 'DEFAULT'}`;
-                            const costInfo = productCosts[sku] || productCosts["DEFAULT"];
-                            const cogs = costInfo.cogs;
-                            const shippingCost = costInfo.shipping;
-
-                            // 2. Ikas specific commission (e.g. 2.5% Iyzico)
-                            const commission = Math.round(revenue * 0.025);
-
-                            // 3. Corporate VAT (KDV) Flow Engine
-                            const kdvRate = 0.20;
-                            const outputVat = revenue - (revenue / (1 + kdvRate));
-                            const cogsVat = cogs - (cogs / (1 + kdvRate));
-                            const shippingVat = shippingCost - (shippingCost / (1 + kdvRate));
-                            const commissionVat = commission - (commission / (1 + kdvRate));
-                            // Net KDV Payable to the State (If inputs exceed outputs, payable is 0)
-                            const tax = Math.max(0, outputVat - cogsVat - shippingVat - commissionVat);
-
-                            const totalCosts = cogs + shippingCost + commission + tax;
-
-                            const statusKey = order.orderPackageStatus === 'FULFILLED' ? 'FULFILLED' : order.orderPaymentStatus;
-
-                            // Check specific mainImageId directly against Ikas CDN if available
-                            const imageId = variantObj.mainImageId || variantObj.images?.[0]?.imageId;
-                            const productImage = imageId ? `https://cdn.myikas.com/images/7692629f-ebc8-45a8-bf85-a2c79fd5af60/${imageId}/image_180.webp` : getFallbackProductImage(variantObj.name || '');
-
-                            return {
-                                _uid: order.id,
-                                id: order.orderNumber,
-                                productId: 'ikas-' + order.id,
-                                sku: sku,
-                                category: getCategoryFromProductName(variantObj.name || ''),
-                                channel: 'Web Sitesi (ikas)',
-                                channelType: 'web',
-                                // Keep actual timestamps intact! No random math!
-                                dateRaw: new Date(order.orderedAt),
-                                channelIcon: Globe,
-                                channelColor: CHANNEL_COLORS.ikas,
-                                productName: variantObj.name || 'Ürün Bulunamadı',
-                                productImage: productImage,
-                                revenue,
-                                cost: totalCosts, // the total hard cost of fulfilling this unit
-                                cogs,
-                                shipping: shippingCost,
-                                commission,
-                                tax,
-                                costBreakdown: `Cogs: ${cogs}₺ | Kargo: ${shippingCost}₺ | Kom. (%2.5): ${commission}₺ | KDV: ${Math.round(tax)}₺`,
-                                profit: revenue - totalCosts,
-                                customerObj: { name: `${order.customer?.firstName || ''} ${order.customer?.lastName?.charAt(0) || ''}.`, city: 'Online' },
-                                statusObj: STATUS_MAP_IKAS[statusKey] || { label: statusKey || 'İşleniyor', color: 'bg-gray-50 text-gray-700 ring-gray-600/20' }
-                            };
-                        });
-                    }
-                }
-
-                // Fetch Trendyol
                 let trendyolData = [];
+                try {
+                    if (tokenRes.ok && tokenData.access_token) {
+                        const reqBody = { query: `{ listOrder(pagination: { limit: 100 }, sort: "-orderedAt") { data { id orderNumber orderedAt orderPaymentStatus orderPackageStatus totalPrice totalFinalPrice customer { firstName lastName email } orderLineItems { quantity finalPrice variant { name mainImageId } } } } }` };
+                        const res = await fetch('/ikas-api/graphql', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tokenData.access_token}` },
+                            body: JSON.stringify(reqBody)
+                        });
+                        const { data, errors } = await res.json();
+                        if (!errors && data?.listOrder?.data) {
+                            ikasData = data.listOrder.data.map(order => {
+                                const item = order.orderLineItems?.[0];
+                                const variantObj = item?.variant || {};
+                                const revenue = order.totalFinalPrice || (item ? item.finalPrice : 0);
+
+                                const grossRevenue = order.totalPrice || revenue;
+                                const discount = Math.max(0, grossRevenue - revenue);
+                                const sku = variantObj.sku || `SKU-${variantObj.name ? variantObj.name.substring(0, 6) : 'DEFAULT'}`;
+                                const costInfo = productCosts[sku] || productCosts["DEFAULT"];
+                                const cogs = costInfo.cogs;
+                                const shippingCost = costInfo.shipping;
+
+                                const commission = Math.round(revenue * 0.025);
+
+
+                                // 3. Corporate VAT (KDV) Flow Engine
+                                const kdvRate = 0.20;
+                                const outputVat = revenue - (revenue / (1 + kdvRate));
+                                const cogsVat = cogs - (cogs / (1 + kdvRate));
+                                const shippingVat = shippingCost - (shippingCost / (1 + kdvRate));
+                                const commissionVat = commission - (commission / (1 + kdvRate));
+                                // Net KDV Payable to the State (If inputs exceed outputs, payable is 0)
+                                const tax = Math.max(0, outputVat - cogsVat - shippingVat - commissionVat);
+
+                                const totalCosts = cogs + shippingCost + commission + tax;
+
+                                const statusKey = order.orderPackageStatus === 'FULFILLED' ? 'FULFILLED' : order.orderPaymentStatus;
+
+                                // Check specific mainImageId directly against Ikas CDN if available
+                                const imageId = variantObj.mainImageId || variantObj.images?.[0]?.imageId;
+                                const productImage = imageId ? `https://cdn.myikas.com/images/7692629f-ebc8-45a8-bf85-a2c79fd5af60/${imageId}/image_180.webp` : getFallbackProductImage(variantObj.name || '');
+
+                                return {
+                                    _uid: order.id,
+                                    id: order.orderNumber,
+                                    productId: 'ikas-' + order.id,
+                                    sku: sku,
+                                    quantity: item?.quantity || 1,
+                                    category: getCategoryFromProductName(variantObj.name || ''),
+                                    channel: 'Web Sitesi (ikas)',
+                                    channelType: 'web',
+                                    // Keep actual timestamps intact! No random math!
+                                    dateRaw: new Date(order.orderedAt),
+                                    channelIcon: Globe,
+                                    channelColor: CHANNEL_COLORS.ikas,
+                                    productName: variantObj.name || 'Ürün Bulunamadı',
+                                    productImage: productImage,
+                                    revenue,
+                                    grossRevenue,
+                                    discount,
+                                    cost: totalCosts, // the total hard cost of fulfilling this unit
+                                    cogs,
+                                    shipping: shippingCost,
+                                    commission,
+                                    tax,
+                                    costBreakdown: `Cogs: ${cogs}₺ | Kargo: ${shippingCost}₺ | Kom. (%2.5): ${commission}₺ | KDV: ${Math.round(tax)}₺`,
+                                    profit: revenue - totalCosts,
+                                    customerObj: { name: `${order.customer?.firstName || ''} ${order.customer?.lastName?.charAt(0) || ''}.`, city: 'Online' },
+                                    statusObj: STATUS_MAP_IKAS[statusKey] || { label: statusKey || 'İşleniyor', color: 'bg-gray-50 text-gray-700 ring-gray-600/20' }
+                                };
+                            });
+                        }
+                    }
+                } catch (e) {
+                    console.error("Ikas API error:", e);
+                    globalErrors.push('Ikas: ' + e.message);
+                }
                 try {
                     const supplierId = dbTySupplierId;
                     const authStr = btoa(`${dbTyApiKey}:${dbTyApiSecret}`);
-                    const tyRes = await fetch(`/trendyol-api/sapigw/suppliers/${supplierId}/orders?size=100`, { headers: { 'Authorization': `Basic ${authStr}` } });
-                    const tyJson = await tyRes.json();
 
-                    if (!tyJson.errors && tyJson.content) {
-                        trendyolData = tyJson.content.map(order => {
+                    // Trendyol API STRICTLY restricts date ranges to a maximum of 15 days per request.
+                    // To fetch a full 30-day dashboard, we must dispatch two concurrent 15-day chunk requests.
+                    const nowTs = new Date().getTime();
+                    const day15Ts = nowTs - (15 * 24 * 60 * 60 * 1000);
+                    const day30Ts = day15Ts - (15 * 24 * 60 * 60 * 1000);
+                    const day45Ts = day30Ts - (15 * 24 * 60 * 60 * 1000);
+
+                    const fetchChunk = async (start, end) => {
+                        const url = `/trendyol-api/sapigw/suppliers/${supplierId}/orders?size=200&startDate=${start}&endDate=${end}&orderByField=CreatedDate&orderByDirection=DESC`;
+                        const res = await fetch(url, { headers: { 'Authorization': `Basic ${authStr}` } });
+                        const json = await res.json();
+                        if (json && json.errors) {
+                            console.error('Trendyol Live API rejected the fetchChunk request:', json);
+                            globalErrors.push('Ty_Err: ' + JSON.stringify(json.errors));
+                            return [];
+                        }
+                        if (json && !json.content) {
+                            globalErrors.push('Ty_Unexpected_JSON: ' + JSON.stringify(json));
+                            return [];
+                        }
+                        return (json && json.content) ? json.content : [];
+                    };
+
+                    const [chunk1, chunk2, chunk3] = await Promise.all([
+                        fetchChunk(day15Ts, nowTs),
+                        fetchChunk(day30Ts, day15Ts),
+                        fetchChunk(day45Ts, day30Ts)
+                    ]);
+
+                    const allTrendyolOrders = [...chunk1, ...chunk2, ...chunk3];
+
+                    if (allTrendyolOrders.length === 0) {
+                        globalErrors.push("Ty_Empty_Array: AuthStrLen=" + authStr.length + " | Supplier=" + supplierId);
+                    }
+
+                    if (allTrendyolOrders.length > 0) {
+                        trendyolData = allTrendyolOrders.map(order => {
+                            // True Net Customer Revenue in Ty is totalPrice + totalTyDiscount.
                             const revenue = order.totalPrice;
+                            // Gross amount before discounts
+                            const grossRevenue = order.grossAmount || revenue;
+                            const discount = order.totalDiscount || 0;
 
-                            // 1. Costs from JSON Dictionary based on SKU
-                            const sku = order.lines?.[0]?.merchantSku || `SKU-${order.lines?.[0]?.productName ? order.lines[0].productName.substring(0, 6) : 'DEFAULT'}`;
-                            const costInfo = productCosts[sku] || productCosts["DEFAULT"];
-                            const cogs = costInfo.cogs;
-                            const shippingCost = costInfo.shipping;
+                            let totalQuantity = 0;
+                            let mappedLines = [];
+                            if (order.lines && Array.isArray(order.lines)) {
+                                mappedLines = order.lines.map(l => {
+                                    totalQuantity += l.quantity || 1;
+                                    return {
+                                        name: l.productName || 'Bilinmeyen Ürün',
+                                        sku: l.merchantSku || l.sku,
+                                        revenue: l.price || 0,
+                                    };
+                                });
+                            }
 
-                            // 2. Trendyol specific commission (typically 15% to 20% in beauty)
-                            const commission = Math.round(revenue * 0.15); // Could be dynamically parsed if available in payload
+                            const primarySku = mappedLines[0]?.sku || 'DEFAULT';
+                            const costInfo = productCosts[primarySku] || productCosts["DEFAULT"];
 
-                            // 3. Corporate VAT (KDV) Flow Engine
-                            const kdvRate = 0.20;
-                            const outputVat = revenue - (revenue / (1 + kdvRate));
-                            const cogsVat = cogs - (cogs / (1 + kdvRate));
-                            const shippingVat = shippingCost - (shippingCost / (1 + kdvRate));
-                            const commissionVat = commission - (commission / (1 + kdvRate));
-                            // Net KDV Payable to the State
+                            // Ty KDV & Commission
+                            const commissionAmount = order.lines && order.lines[0] && order.lines[0].commissionAmount
+                                ? order.lines[0].commissionAmount
+                                : (revenue * 0.15); // Fallback
+
+                            const cogs = costInfo.cogs * Math.max(1, totalQuantity);
+                            const shippingCost = costInfo.shipping * Math.max(1, totalQuantity);
+
+                            const reqTyKDVRate = 0.20;
+                            const outputVat = revenue - (revenue / (1 + reqTyKDVRate));
+                            const cogsVat = cogs - (cogs / (1 + 0.20));
+                            const shippingVat = shippingCost - (shippingCost / (1 + 0.20));
+                            const commissionVat = commissionAmount - (commissionAmount / (1 + 0.20));
                             const tax = Math.max(0, outputVat - cogsVat - shippingVat - commissionVat);
 
-                            const totalCosts = cogs + shippingCost + commission + tax;
+                            const totalCosts = cogs + shippingCost + commissionAmount + tax;
 
                             let statusInfo = { label: order.status || 'İşleniyor', color: 'bg-gray-50 text-gray-700 ring-gray-600/20' };
                             if (order.status === 'Delivered') statusInfo = { label: 'Teslim Edildi', color: 'bg-green-50 text-green-700 ring-green-600/20' };
@@ -342,7 +402,8 @@ export function useOrders(products = []) {
                                 _uid: `ty-${order.id}`,
                                 id: order.orderNumber,
                                 productId: `ty-${order.id}`,
-                                sku: sku,
+                                sku: primarySku,
+                                quantity: order.lines?.reduce((sum, l) => sum + (l.quantity || 1), 0) || 1,
                                 category: getCategoryFromProductName(order.lines?.[0]?.productName || ''),
                                 channel: 'Trendyol',
                                 channelType: 'marketplace',
@@ -353,12 +414,14 @@ export function useOrders(products = []) {
                                 productName: order.lines?.[0]?.productName || 'Satış',
                                 productImage: getFallbackProductImage(order.lines?.[0]?.productName || ''),
                                 revenue,
+                                grossRevenue,
+                                discount,
                                 cost: totalCosts,
                                 cogs,
                                 shipping: shippingCost,
-                                commission,
+                                commission: commissionAmount,
                                 tax,
-                                costBreakdown: `Cogs: ${cogs}₺ | Kargo: ${shippingCost}₺ | Kom. (%15): ${commission}₺ | KDV: ${Math.round(tax)}₺`,
+                                costBreakdown: `Cogs: ${cogs}₺ | Kargo: ${shippingCost}₺ | Kom. (%15): ${commissionAmount}₺ | KDV: ${Math.round(tax)}₺`,
                                 profit: revenue - totalCosts,
                                 customerObj: { name: `${order.customerFirstName || ''} ${order.customerLastName?.charAt(0) || ''}.`, city: order.shipmentAddress?.city || 'Bilinmiyor' },
                                 statusObj: statusInfo
@@ -368,25 +431,32 @@ export function useOrders(products = []) {
                         // NOTE: We REMOVED the random date spreading logic.
                         // Live API timestamps are now strictly matched.
                     }
-                } catch (e) { console.error("Trendyol API Error", e); } // Silently handled without breaking Ikas
+                } catch (e) {
+                    console.error("Trendyol API Error", e);
+                    globalErrors.push('Ty: ' + e.message);
+                } // Silently handled without breaking Ikas
 
                 if (isMounted) {
-                    let finalData = [...ikasData, ...trendyolData];
-
-                    // VERCEL / DEMO FALLBACK: If live API fails or proxy blocking CORS, load the mock dataset
-                    if (finalData.length === 0) {
-                        finalData = generateFallbackData();
+                    // Mute fallbacks completely as per User request ("sadece gerçek veri görmek istiyorum")
+                    if (ikasData.length === 0) {
+                        console.warn('Ikas API returned 0 orders or failed.');
+                        globalErrors.push('Ikas_Empty_Array');
+                    }
+                    if (trendyolData.length === 0) {
+                        console.warn('Trendyol API returned 0 orders or failed.');
                     }
 
-                    setRawOrders(finalData.sort((a, b) => b.dateRaw - a.dateRaw));
+                    const liveData = [...ikasData, ...trendyolData].sort((a, b) => b.dateRaw - a.dateRaw);
+                    setRawOrders(liveData);
+                    setError(globalErrors.length > 0 ? globalErrors.join(' | ') : null);
                 }
             } catch (err) {
-                console.warn("Caught fatal fetch wrapper error on edge, defaulting to payload", err);
-                if (isMounted) {
-                    setRawOrders(generateFallbackData());
-                }
+                console.error("Live fetch completely failed:", err);
+                // Also muted fallback here
+                setRawOrders([]);
+                setError(`Canlı satışlar alınamadı (Hata: ${err.message})`);
             } finally {
-                if (isMounted) setLoading(false);
+                setLoading(false);
             }
         }
 

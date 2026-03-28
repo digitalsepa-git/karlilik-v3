@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useMemo } from 'react';
-import { useOrders } from '../hooks/useOrders';
+import { useOrders } from '../hooks/useOrdersLive';
 import { useIkasProducts } from '../hooks/useIkasProducts';
 import { useGoogleAnalytics } from '../hooks/useGoogleAnalytics';
 

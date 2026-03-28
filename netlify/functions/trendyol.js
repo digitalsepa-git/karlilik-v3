@@ -26,9 +26,14 @@ export const handler = async (event, context) => {
         // Ensure path starts with /
         if (!proxyPath.startsWith('/')) proxyPath = '/' + proxyPath;
         
-        const targetUrl = `https://api.trendyol.com${proxyPath}`;
+        const qsp = event.queryStringParameters || {};
+        const queryStr = Object.keys(qsp).length > 0 
+            ? '?' + new URLSearchParams(qsp).toString() 
+            : '';
+            
+        const targetUrl = `https://api.trendyol.com${proxyPath}${queryStr}`;
         
-        console.log('[Trendyol Proxy] Path:', event.path, '→ Target:', targetUrl);
+        console.log('[Trendyol Proxy] Path:', event.path, 'Query:', queryStr, '→ Target:', targetUrl);
         
         const authHeader = event.headers['authorization'] || event.headers['Authorization'] || '';
 

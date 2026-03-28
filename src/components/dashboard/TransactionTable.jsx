@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { ShoppingBag, Globe, Store, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { RAW_PRODUCTS } from '../../data/mockProducts';
-import { getFallbackProductImage } from '../../hooks/useOrders';
+import { getFallbackProductImage } from '../../hooks/useOrdersLive';
 
 const CHANNEL_ICONS = { marketplace: ShoppingBag, web: Globe };
 const CHANNEL_COLORS = {
@@ -42,7 +42,7 @@ RAW_PRODUCTS.forEach((p) => {
     p.channels.forEach((channel) => {
         // Skip adding mock Web data entirely to make way for real ikas data
         if (channel.name === 'Web') return;
-        
+
         const revenue = channel.price;
         const cost = (p.cogs || 0) + (p.shipping || 0) + (channel.commission || 0) + (p.adSpend || 0);
         const profit = revenue - cost;
@@ -82,8 +82,8 @@ export function TransactionTable({ orders = [], loading = false, filters = {} })
     const getDateRangeBounds = (rangeFilter) => {
         const now = new Date();
         const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        
-        switch(rangeFilter) {
+
+        switch (rangeFilter) {
             case 'thisMonth':
                 return { start: new Date(now.getFullYear(), now.getMonth(), 1), end: now };
             case 'lastQuarter': {
@@ -95,14 +95,14 @@ export function TransactionTable({ orders = [], loading = false, filters = {} })
                 const m = now.getMonth(); // 0-indexed (0=Jan, 11=Dec)
                 let startMonth, year = now.getFullYear();
                 if (m === 11 || m === 0 || m === 1) { // Dec, Jan, Feb -> Q1
-                   startMonth = 11; // Dec
-                   if (m !== 11) year -= 1; // if Jan or Feb, Q1 started in Dec of previous year
+                    startMonth = 11; // Dec
+                    if (m !== 11) year -= 1; // if Jan or Feb, Q1 started in Dec of previous year
                 } else if (m >= 2 && m <= 4) { // Mar, Apr, May -> Q2
-                   startMonth = 2; // March
+                    startMonth = 2; // March
                 } else if (m >= 5 && m <= 7) { // Jun, Jul, Aug -> Q3
-                   startMonth = 5; // June
+                    startMonth = 5; // June
                 } else { // Sep, Oct, Nov -> Q4
-                   startMonth = 8; // September
+                    startMonth = 8; // September
                 }
                 const start = new Date(year, startMonth, 1);
                 return { start, end: now };
@@ -121,8 +121,8 @@ export function TransactionTable({ orders = [], loading = false, filters = {} })
 
     const { filtered, paginatedData, totalPages } = useMemo(() => {
         // Sadece gerçek API verilerini kullan
-        const combined = [...orders.map(o => ({...o, isReal: true}))];
-        
+        const combined = [...orders.map(o => ({ ...o, isReal: true }))];
+
         // Sort uniformly by actual date
         combined.sort((a, b) => b.dateRaw - a.dateRaw);
 
@@ -143,10 +143,10 @@ export function TransactionTable({ orders = [], loading = false, filters = {} })
             const activeChLower = activeChannel?.toLowerCase() || 'all';
             const txChLower = tx.channel?.toLowerCase() || '';
 
-            const chMatch = activeChLower === 'all' || 
-                txChLower === activeChLower || 
+            const chMatch = activeChLower === 'all' ||
+                txChLower === activeChLower ||
                 (activeChLower === 'web' && txChLower.includes('ikas'));
-                
+
             const catMatch = activeCategory === 'all' || tx.category === activeCategory;
             return chMatch && catMatch;
         });
@@ -202,18 +202,35 @@ export function TransactionTable({ orders = [], loading = false, filters = {} })
                                 <th className="px-6 py-3 font-medium">Ürün</th>
                                 <th className="px-6 py-3 font-medium">Müşteri</th>
                                 <th className="px-6 py-3 font-medium text-right">Tutar</th>
-                                <th className="px-6 py-3 font-medium text-right" title="Ürün Alış, Kargo, Komisyon, KDV">Direkt Maliyet</th>
-                                <th className="px-6 py-3 font-medium text-right">Brüt Kâr</th>
-                                <th className="px-6 py-3 font-medium text-right" title="Maaş, Kira, Reklam Payı">Şirket Gider Payı (ABC)</th>
-                                <th className="px-6 py-3 font-medium text-right">NET KAR</th>
-                                <th className="px-6 py-3 font-medium">Durum</th>
+                                <th className="px-6 py-3 font-medium">Ödeme Durumu</th>
+                                <th className="px-6 py-3 font-medium">Sipariş Durumu</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                             {paginatedData.map((item, index) => {
                                 const ChannelIcon = item.channelIcon;
                                 const customer = item.customerObj || CUSTOMERS[item.customerId];
-                                const status = item.statusObj;
+                                
+                                let paymentStatus = { label: 'Bilinmiyor', color: 'bg-gray-50 text-gray-700 ring-gray-600/20' };
+                                let orderStatus = item.statusObj;
+                            
+                                if (item.channel === 'Trendyol') {
+                                    paymentStatus = { label: 'Ödendi', color: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' };
+                                    if (orderStatus?.label === 'Shipped') orderStatus = { label: 'Kargolandı', color: 'bg-blue-50 text-blue-700 ring-blue-600/20' };
+                                } else {
+                                    const sl = item.statusObj?.label || '';
+                                    if (sl === 'Kargolandı' || sl === 'Teslim Edildi') {
+                                        paymentStatus = { label: 'Ödendi', color: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' };
+                                    } else if (sl === 'Ödendi / Bekliyor') {
+                                        paymentStatus = { label: 'Ödendi', color: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' };
+                                        orderStatus = { label: 'Hazırlanıyor', color: 'bg-amber-50 text-amber-700 ring-amber-600/20' };
+                                    } else if (sl === 'İade Edildi' || sl === 'İade Talep') {
+                                        paymentStatus = item.statusObj;
+                                    } else {
+                                        paymentStatus = { label: 'Ödendi', color: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' };
+                                    }
+                                }
+
                                 return (
                                     <tr key={item._uid} className="hover:bg-slate-50/80 transition-colors">
                                         {/* ID & Channel */}
@@ -279,54 +296,23 @@ export function TransactionTable({ orders = [], loading = false, filters = {} })
                                             ₺{item.revenue.toLocaleString('tr-TR')}
                                         </td>
 
-                                        {/* Direct Cost */}
-                                        <td className="px-6 py-4 text-right whitespace-nowrap tabular-nums text-slate-600">
-                                            ₺{item.directCost.toLocaleString('tr-TR')}
-                                        </td>
-
-                                        {/* Gross Profit */}
-                                        <td className="px-6 py-4 text-right whitespace-nowrap tabular-nums font-medium">
-                                            <span className={item.grossProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
-                                                {item.grossProfit > 0 ? '+' : ''}₺{item.grossProfit.toLocaleString('tr-TR')}
-                                            </span>
-                                        </td>
-
-                                        {/* Indirect Cost (ABC) - Interactive Tooltip */}
-                                        <td className="px-6 py-4 text-right whitespace-nowrap">
-                                            <div className="group relative inline-block">
-                                                <span className="text-slate-500 decoration-dashed underline decoration-slate-300 underline-offset-4 cursor-help tabular-nums">
-                                                    ₺{item.indirectCost.toLocaleString('tr-TR')}
-                                                </span>
-                                                <div className={cn(
-                                                    "absolute right-0 min-w-[280px] w-max hidden group-hover:block z-[99] animate-in fade-in",
-                                                    index < 2 
-                                                        ? "top-[calc(100%+8px)] slide-in-from-top-2" 
-                                                        : "bottom-[calc(100%+8px)] slide-in-from-bottom-2"
-                                                )}>
-                                                    <div className="bg-slate-900/95 backdrop-blur-md text-white text-xs rounded-lg px-4 py-3 shadow-2xl border border-slate-700/50">
-                                                        {item.costBreakdown}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </td>
-
-                                        {/* Net Profit */}
-                                        <td className="px-6 py-4 text-right whitespace-nowrap tabular-nums font-bold">
-                                            <span className={cn(
-                                                'font-bold tabular-nums',
-                                                item.profit > 0 ? 'text-emerald-600' : 'text-rose-600'
-                                            )}>
-                                                {item.profit > 0 ? '+' : ''}₺{Math.abs(Math.round(item.profit)).toLocaleString('tr-TR')}
-                                            </span>
-                                        </td>
-
-                                        {/* Status */}
+                                        {/* Payment Status */}
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <span className={cn(
                                                 'inline-flex items-center rounded-full px-2 py-1 text-[11px] font-medium ring-1 ring-inset',
-                                                status.color
+                                                paymentStatus?.color
                                             )}>
-                                                {status.label}
+                                                {paymentStatus?.label}
+                                            </span>
+                                        </td>
+
+                                        {/* Order Status */}
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <span className={cn(
+                                                'inline-flex items-center rounded-full px-2 py-1 text-[11px] font-medium ring-1 ring-inset',
+                                                orderStatus?.color
+                                            )}>
+                                                {orderStatus?.label}
                                             </span>
                                         </td>
                                     </tr>

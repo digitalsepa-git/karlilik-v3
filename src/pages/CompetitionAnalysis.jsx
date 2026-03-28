@@ -42,7 +42,7 @@ import {
 } from 'recharts';
 import { cn } from '../lib/utils';
 import { useIkasProducts } from '../hooks/useIkasProducts';
-import { useOrders, getFallbackProductImage } from '../hooks/useOrders';
+import { useOrders, getFallbackProductImage } from '../hooks/useOrdersLive';
 import productCosts from '../data/productCosts.json';
 
 // Helper for Sparkline SVG Path

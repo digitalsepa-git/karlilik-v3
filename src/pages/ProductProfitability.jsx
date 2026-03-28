@@ -15,7 +15,7 @@ const generateSparklineData = (startValue, endValue) => {
 };
 
 import { useData } from '../context/DataContext';
-import { getFallbackProductImage } from '../hooks/useOrders';
+import { getFallbackProductImage } from '../hooks/useOrdersLive';
 import { useGoogleAnalytics } from '../hooks/useGoogleAnalytics';
 import { expensesData, calculateDailyExpense } from '../data/expensesData';
 

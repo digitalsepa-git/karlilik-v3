@@ -10,8 +10,11 @@ import {
     CartesianGrid,
     Tooltip,
     ResponsiveContainer,
+    ComposedChart,
+    ReferenceLine,
     AreaChart,
-    Area
+    Area,
+    Legend
 } from 'recharts';
 import {
     ArrowUpRight,
@@ -25,64 +28,122 @@ import {
     File,
     Table,
     Download,
-    ChevronDown
+    ChevronDown,
+    Package,
+    Wallet,
+    Activity,
+    Info
 } from 'lucide-react';
 import { InventoryInsights } from '../components/dashboard/InventoryInsights';
 import { MarketingPerformance } from '../components/dashboard/MarketingPerformance';
 import { SalesChannelCards } from '../components/dashboard/SalesChannelCards';
 import { TransactionTable } from '../components/dashboard/TransactionTable';
 import { cn } from '../lib/utils';
-const StatCard = ({ title, value, change, icon: Icon, trend }) => (
-    <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex items-center justify-between pb-2">
-            <p className="text-sm font-medium text-slate-500">{title}</p>
-            <div className={cn("p-2 rounded-lg bg-slate-50", trend === 'up' ? "text-emerald-600" : "text-rose-600")}>
-                <Icon className="h-4 w-4" />
+
+const StatCard = ({ title, value, change, icon: Icon, trend, tooltip }) => (
+    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm relative hover:shadow-md transition-shadow hover:border-indigo-200 flex flex-col justify-between h-full group/card">
+        <div>
+            <div className="flex items-center justify-between pb-1.5">
+                <div className="flex items-center gap-1.5">
+                    <p className="text-[13px] font-semibold text-slate-500">{title}</p>
+                    {tooltip && (
+                        <div className="group/tooltip flex items-center relative">
+                            <Info className="h-3.5 w-3.5 text-slate-400 cursor-help hover:text-indigo-500 transition-colors" />
+                            {/* Tooltip Popup positioned WIDE and UPWARDS */}
+                            <div className="absolute bottom-[calc(100%+8px)] left-1/2 -translate-x-1/2 opacity-0 group-hover/tooltip:opacity-100 transition-opacity duration-200 pointer-events-none w-80 p-3.5 bg-slate-800 text-white text-[11.5px] rounded-xl shadow-xl z-[999] text-left font-normal leading-relaxed">
+                                {tooltip}
+                                <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-[1px] border-[6px] border-transparent border-t-slate-800"></div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+                <div className={cn("p-1.5 rounded-lg", trend === 'up' ? "text-emerald-600 bg-emerald-50" : trend === 'down' ? "text-rose-600 bg-rose-50" : "text-slate-500 bg-slate-50")}>
+                    <Icon className="h-4 w-4" />
+                </div>
+            </div>
+            <div className="flex items-baseline gap-2 mt-1">
+                <h3 className="text-2xl font-bold text-slate-900 tracking-tight">{value}</h3>
             </div>
         </div>
-        <div className="flex items-baseline gap-2">
-            <h3 className="text-2xl font-bold text-slate-900">{value}</h3>
-            <span className={cn("flex items-center text-xs font-medium", trend === 'up' ? "text-emerald-600" : "text-rose-600")}>
-                {trend === 'up' ? <ArrowUpRight className="h-3 w-3 mr-1" /> : <ArrowDownRight className="h-3 w-3 mr-1" />}
-                {change}
+        <div className="mt-3">
+            <span className={cn("flex items-center text-[11px] font-bold", trend === 'up' ? "text-emerald-600" : trend === 'down' ? "text-rose-600" : "text-slate-500")}>
+                {trend === 'up' && <ArrowUpRight className="h-3.5 w-3.5 mr-0.5" />}
+                {trend === 'down' && <ArrowDownRight className="h-3.5 w-3.5 mr-0.5" />}
+                <span>{change}</span>
             </span>
         </div>
     </div>
 );
 
 // Custom Tooltip Component for Sales & Profit Chart
+// Custom Tooltip Component for Break-even Chart
+// Custom Tooltip Component for Break-even Chart
 const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
-        // Payload is ordered by render order (Profit, then Sales).
-        // Reverse it to show "Sales" (the top visual layer) first in the tooltip.
-        const sortedPayload = [...payload].reverse();
-
+        // Find if this is the breakeven point
+        const isBe = payload[0]?.payload?.isBreakEven;
+        const fullPayload = payload[0]?.payload;
+        
         return (
-            <div className="bg-white p-4 rounded-xl shadow-lg border border-gray-50 text-left">
-                {/* Date Header */}
-                <p className="text-sm font-semibold text-gray-900 mb-2">
+            <div className="bg-white p-4 rounded-xl shadow-lg border border-gray-50 text-left min-w-[260px]">
+                {isBe && (
+                    <div className="mb-3 inline-flex flex-col">
+                        <span className="px-2 py-1 bg-indigo-100 text-indigo-700 text-[11px] font-bold rounded uppercase tracking-wider">
+                            🚀 Başabaş Noktası
+                        </span>
+                        <span className="text-[10px] text-gray-500 mt-1 font-medium">Brüt kar, şirket giderlerini aştı!</span>
+                    </div>
+                )}
+                <p className="text-sm font-semibold text-gray-900 mb-3 pb-2 border-b border-gray-100">
                     {new Date(label).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })}
                 </p>
 
-                {/* Data Items */}
-                <div className="space-y-1">
-                    {sortedPayload.map((entry, index) => {
-                        // Determine color based on the name/key
-                        const color = entry.dataKey === 'sales' ? '#6366f1' : '#10b981'; // Indigo for Sales, Emerald for Profit
+                <div className="space-y-4">
+                    {/* Günlük Değerler (Grafikte Çizilenler) */}
+                    <div>
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">O Günün Akışı</p>
+                        <div className="space-y-1.5">
+                            <div className="text-[13px] flex items-center justify-between gap-6">
+                                <span style={{ color: '#6366f1', fontWeight: 600 }}>Günlük Net Ciro:</span>
+                                <span className="font-bold text-gray-800">
+                                    {new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 0 }).format(fullPayload.dailyCiro)}
+                                </span>
+                            </div>
+                            <div className="text-[13px] flex items-center justify-between gap-6">
+                                <span style={{ color: '#10b981', fontWeight: 600 }}>Günlük Brüt Kar:</span>
+                                <span className="font-bold text-gray-800">
+                                    {new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 0 }).format(fullPayload.dailyBrutKar)}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
 
-                        return (
-                            <p key={index} className="text-sm flex items-center gap-2">
-                                {/* Label with chart color */}
-                                <span style={{ color: color, fontWeight: 500 }}>
-                                    {entry.name}:
+                    {/* Kümülatif Değerler (Bilgi Amacıyla) */}
+                    <div className="pt-3 border-t border-gray-50">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Ay Başına Göre Birikimli Dağılım</p>
+                        <div className="space-y-1.5">
+                            <div className="text-[13px] flex items-center justify-between gap-6">
+                                <span className="text-gray-500 font-medium">Toplam Net Ciro:</span>
+                                <span className="font-bold text-gray-700">
+                                    {new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 0 }).format(fullPayload.netCiro)}
                                 </span>
-                                {/* Value (Formatted) */}
-                                <span className="font-medium text-gray-700">
-                                    {new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(entry.value)}
+                            </div>
+                            <div className="text-[13px] flex items-center justify-between gap-6">
+                                <span className="text-gray-500 font-medium">Toplam Brüt Kar:</span>
+                                <span className="font-bold text-gray-700">
+                                    {new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 0 }).format(fullPayload.brutKar)}
                                 </span>
-                            </p>
-                        );
-                    })}
+                            </div>
+                            <div className="text-[13px] flex items-center justify-between gap-6 mt-2 pt-2 border-t border-gray-100">
+                                <span style={{ color: fullPayload.netDurum < 0 ? '#e11d48' : '#10b981', fontWeight: 700 }}>
+                                    Genel Kâr/Zarar:
+                                </span>
+                                <span className={cn("font-bold text-[15px] tracking-tight", fullPayload.netDurum < 0 ? "text-rose-600" : "text-emerald-600")}>
+                                    {new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 0 }).format(fullPayload.netDurum)}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         );
@@ -128,11 +189,15 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
 
     const getDateRangeBounds = (rangeFilter) => {
         const now = new Date();
-        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        
+        // Form strict TRT (UTC+3) midnight
+        const trtNow = new Date(now.getTime() + (3 * 60 * 60 * 1000));
+        const startOfTRTDay = new Date(Date.UTC(trtNow.getUTCFullYear(), trtNow.getUTCMonth(), trtNow.getUTCDate(), -3, 0, 0));
+        const endOfTRTDay = new Date(startOfTRTDay.getTime() + (24 * 60 * 60 * 1000) - 1);
 
         switch (rangeFilter) {
             case 'thisMonth':
-                return { start: new Date(now.getFullYear(), now.getMonth(), 1), end: now };
+                return { start: new Date(now.getFullYear(), now.getMonth(), 1), end: endOfTRTDay };
             case 'lastQuarter': {
                 const m = now.getMonth();
                 let startMonth, year = now.getFullYear();
@@ -140,16 +205,16 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
                 else if (m >= 2 && m <= 4) startMonth = 2;
                 else if (m >= 5 && m <= 7) startMonth = 5;
                 else startMonth = 8;
-                return { start: new Date(year, startMonth, 1), end: now };
+                return { start: new Date(year, startMonth, 1), end: endOfTRTDay };
             }
             case 'thisYear':
-                return { start: new Date(now.getFullYear(), 0, 1), end: now };
+                return { start: new Date(now.getFullYear(), 0, 1), end: endOfTRTDay };
             default:
                 if (rangeFilter && rangeFilter.startsWith('custom:')) {
                     const parts = rangeFilter.split(':');
                     return { start: new Date(parts[1] + 'T00:00:00Z'), end: new Date(parts[2] + 'T23:59:59.999Z') };
                 }
-                return { start: new Date(startOfDay.getTime() - 29 * 24 * 60 * 60 * 1000), end: now };
+                return { start: new Date(startOfTRTDay.getTime() - 29 * 24 * 60 * 60 * 1000), end: endOfTRTDay };
         }
     };
 
@@ -203,12 +268,15 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
     const totals = useMemo(() => {
         const aggr = filteredOrders.reduce((acc, order) => {
             acc.revenue += order.revenue || 0;
+            acc.grossRevenue += order.grossRevenue || order.revenue || 0;
+            acc.discount += order.discount || 0;
             acc.cogs += order.cogs || 0;
             acc.shipping += order.shipping || 0;
             acc.commission += order.commission || 0;
             acc.tax += order.tax || 0;
+            acc.quantity += order.quantity || 1;
             return acc;
-        }, { revenue: 0, cogs: 0, shipping: 0, commission: 0, tax: 0 });
+        }, { revenue: 0, grossRevenue: 0, discount: 0, cogs: 0, shipping: 0, commission: 0, tax: 0, quantity: 0 });
 
         aggr.adSpend = gaData?.totalAdCost || 0;
         aggr.fixedCost = proratedFixedCost;
@@ -220,6 +288,8 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
     // Derived KPIs
     const totalCosts = totals.cogs + totals.adSpend + totals.shipping + totals.commission + totals.tax + totals.fixedCost + totals.taxAndAmort;
     const netProfit = totals.revenue - totalCosts;
+    const grossProfit = totals.revenue - totals.cogs;
+    
     // FAVÖK (EBITDA), Net Kar'a Vergi (KDV dahil), Amortisman ve Faizin geri eklenmesiyle bulunur.
     const ebitda = netProfit + totals.taxAndAmort + totals.tax;
     const roi = totalCosts > 0 ? (netProfit / totalCosts) * 100 : 0;
@@ -265,12 +335,15 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
     const prevTotals = useMemo(() => {
         const aggr = prevFilteredOrders.reduce((acc, order) => {
             acc.revenue += order.revenue || 0;
+            acc.grossRevenue += order.grossRevenue || order.revenue || 0;
+            acc.discount += order.discount || 0;
             acc.cogs += order.cogs || 0;
             acc.shipping += order.shipping || 0;
             acc.commission += order.commission || 0;
             acc.tax += order.tax || 0;
+            acc.quantity += order.quantity || 1;
             return acc;
-        }, { revenue: 0, cogs: 0, shipping: 0, commission: 0, tax: 0 });
+        }, { revenue: 0, grossRevenue: 0, discount: 0, cogs: 0, shipping: 0, commission: 0, tax: 0, quantity: 0 });
 
         // Exact previous ad spend from API
         aggr.adSpend = prevGaData?.totalAdCost || 0;
@@ -281,10 +354,11 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
 
     const prevTotalCosts = prevTotals.cogs + prevTotals.adSpend + prevTotals.shipping + prevTotals.commission + prevTotals.tax + prevTotals.fixedCost + prevTotals.taxAndAmort;
     const prevNetProfit = prevTotals.revenue - prevTotalCosts;
+    const prevGrossProfit = prevTotals.revenue - prevTotals.cogs;
     const prevEbitda = prevNetProfit + prevTotals.taxAndAmort + prevTotals.tax;
     const prevRoi = prevTotalCosts > 0 ? (prevNetProfit / prevTotalCosts) * 100 : 0;
 
-    const getTrend = (current, prev, isPoints = false) => {
+    const getTrend = (current, prev, isPoints = false, isQuantity = false) => {
         if (!prev) return { text: "Yeni Veri", trend: "neutral" };
         const diff = current - prev;
         const pct = isPoints ? diff : (diff / Math.abs(prev)) * 100;
@@ -293,7 +367,7 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
         const unit = isPoints ? " Puan" : "%";
 
         // Display exactly the previous absolute value so the user sees 100% of the data representation
-        const prevValueText = isPoints ? `${prev.toFixed(1)}%` : fmt(prev);
+        const prevValueText = isPoints ? `${prev.toFixed(1)}%` : isQuantity ? Math.round(prev) : fmt(prev);
         return {
             text: `${sign}${isPoints ? pct.toFixed(1) : Math.abs(pct).toFixed(1)}${unit} (vs ${prevValueText})`,
             trend
@@ -322,7 +396,11 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
         console.groupEnd();
     }, [dateStart, dateEnd, prevStartDateStr, prevEndDateStr, totals, prevTotals, netProfit, prevNetProfit]);
 
+    const grossRevTrend = getTrend(totals.grossRevenue, prevTotals.grossRevenue);
+    const discountTrend = getTrend(totals.discount, prevTotals.discount);
     const revTrend = getTrend(totals.revenue, prevTotals.revenue);
+    const qtyTrend = getTrend(totals.quantity, prevTotals.quantity, false, true);
+    const grossProfitTrend = getTrend(grossProfit, prevGrossProfit);
     const profitTrend = getTrend(netProfit, prevNetProfit);
     const ebitdaTrend = getTrend(ebitda, prevEbitda);
     const roiTrend = getTrend(roi, prevRoi, true);
@@ -434,51 +512,77 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
         });
     }, [filteredOrders, abcRates]);
 
-    // Chart data — Aggregate daily orders explicitly based on REAL data points
-    // Integrated with Activity-Based Costing (ABC) for mathematically truthful Net Profit
+    // Chart data — Cumulative Break-even Analysis
     const chartData = useMemo(() => {
         if (!filteredOrders.length) return [];
 
         const dayMap = {};
-        const { webAdSpendRate, globalFixedRate, channelBurdenRates, categoryBurdenRates } = abcRates;
 
         let curr = new Date(dateStart);
         while (curr <= dateEnd) {
             const dateStr = curr.toISOString().split('T')[0];
-            dayMap[dateStr] = { date: dateStr, sales: 0, profit: 0, count: 0 };
+            dayMap[dateStr] = { date: dateStr, sales: 0, brutKar: 0, contribution: 0 };
             curr.setDate(curr.getDate() + 1);
         }
 
-        // 4. Trace Orders and apply direct costs + ABC indirect overhead
+        // Trace Orders and calculate daily metrics
         filteredOrders.forEach(order => {
             const dateStr = order.dateRaw.toISOString().split('T')[0];
             if (dayMap[dateStr]) {
-                dayMap[dateStr].sales += order.revenue;
-
-                const chLower = (order.channel || '').toLowerCase();
-                const catLower = (order.category || '').toLowerCase();
-
-                const commissionCost = order.commission || 0;
-                const shippingCost = order.shipping || 0;
+                const revenue = order.revenue || 0;
                 const cogs = order.cogs || 0;
+                const shipping = order.shipping || 0;
+                const commission = order.commission || 0;
                 const tax = order.tax || 0;
 
-                const orderRevenue = order.revenue || 0;
-                const isWeb = chLower.includes('web') || chLower.includes('ikas');
-                const adSpendBurden = isWeb ? (orderRevenue * webAdSpendRate) : 0;
-                const globalFixedBurden = orderRevenue * globalFixedRate;
-                const customChannelBurden = orderRevenue * (channelBurdenRates[chLower] || 0);
-                const customCategoryBurden = orderRevenue * (categoryBurdenRates[catLower] || 0);
-
-                const totalBurdenAndCosts = cogs + shippingCost + commissionCost + tax + adSpendBurden + globalFixedBurden + customChannelBurden + customCategoryBurden;
-
-                dayMap[dateStr].profit += (orderRevenue - totalBurdenAndCosts);
-                dayMap[dateStr].count += 1;
+                dayMap[dateStr].sales += revenue;
+                dayMap[dateStr].brutKar += (revenue - cogs);
+                // Faaliyet İçi Katkı Payı (Net Durumu azaltacak / Kara dönüştürecek tutar)
+                dayMap[dateStr].contribution += (revenue - cogs - shipping - commission - tax);
             }
         });
 
-        return Object.values(dayMap);
-    }, [filteredOrders, abcRates, dateStart, dateEnd]);
+        const sortedDays = Object.values(dayMap).sort((a,b) => new Date(a.date) - new Date(b.date));
+        
+        // Kümülatif başlangıç noktamız (Dönemin toplam genel/sabit gider deliği)
+        const totalFixedHole = (proratedFixedCost || 0) + (proratedTaxAndFinance || 0) + (gaData?.totalAdCost || 0);
+
+        let cumulativeSales = 0;
+        let cumulativeBrutKar = 0;
+        let cumulativeNetDurum = -totalFixedHole;
+        let breakEvenFound = false;
+
+        return sortedDays.map(day => {
+            cumulativeSales += day.sales;
+            cumulativeBrutKar += day.brutKar;
+            
+            const prevNetDurum = cumulativeNetDurum;
+            cumulativeNetDurum += day.contribution;
+            
+            let isBreakEven = false;
+            // Mark break-even exact crossing date
+            if (prevNetDurum < 0 && cumulativeNetDurum >= 0 && !breakEvenFound) {
+                isBreakEven = true;
+                breakEvenFound = true;
+            }
+
+            return {
+                date: day.date,
+                dailyCiro: day.sales,
+                dailyBrutKar: day.brutKar,
+                netCiro: cumulativeSales,
+                brutKar: cumulativeBrutKar,
+                netDurum: cumulativeNetDurum,
+                isBreakEven
+            };
+        });
+    }, [filteredOrders, proratedFixedCost, proratedTaxAndFinance, gaData, dateStart, dateEnd]);
+
+    // Find dynamic break-even date for ReferenceLine
+    const breakEvenDate = useMemo(() => {
+        const beDay = chartData.find(d => d.isBreakEven);
+        return beDay ? beDay.date : null;
+    }, [chartData]);
 
     // Filtered ALERTS (Rekabet Ozeti) - uses real products and competitors
     const filteredAlerts = useMemo(() => {
@@ -566,6 +670,14 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
 
     return (
         <div className="space-y-6">
+            <div className="mb-6 p-4 rounded-xl bg-amber-100 border-2 border-amber-400 text-amber-900 font-mono text-sm shadow-sm relative z-[9999]">
+                <strong>[Diagnostic HUD] ({new Date().toLocaleTimeString()})</strong><br/>
+                Orders Array (Sourced from Ikas/Ty): {orders?.length || 0} <br/>
+                Filtered Orders Array (UI Matches): {filteredOrders?.length || 0} <br/>
+                Fetch Loading State: {ordersData?.loading ? 'true' : 'false'} <br/>
+                Fetch Error Object: {ordersData?.error ? String(ordersData.error) : 'null'} <br/>
+                Dashboard Date Limits: {dateStart ? dateStart.toISOString() : 'none'} to {dateEnd ? dateEnd.toISOString() : 'none'}
+            </div>
             <div className="flex items-center justify-between">
                 <h1 className="text-2xl font-bold text-slate-900">{t.title}</h1>
 
@@ -653,97 +765,179 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
             )}
 
             {/* KPI Cards — computed from filtered products & historical period comparison */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 gap-3">
                 <StatCard
-                    title={t.netSales}
+                    title="Brüt Ciro"
+                    value={fmt(totals.grossRevenue)}
+                    change={grossRevTrend.text}
+                    icon={DollarSign}
+                    trend={grossRevTrend.trend}
+                    tooltip={<><b>Brüt Ciro:</b><br />Toplam satışların indirimsiz ham ürün değeridir. Müşteriye uygulanan iade, kupon ve diğer sepet indirimlerinden önceki potansiyel ciroyu ifade eder.</>}
+                />
+                <StatCard
+                    title="İndirimler"
+                    value={`-${fmt(totals.discount)}`}
+                    change={discountTrend.text}
+                    icon={Percent}
+                    trend={discountTrend.trend === "up" ? "down" : discountTrend.trend === "down" ? "up" : "neutral"}
+                    tooltip={<><b>İndirimler (Kupon/Havale):</b><br />Trendyol satıcı/platform indirimleri, İkas havale sepet indirimleri ve sadakat kuponlarının toplam iptal tutarıdır.</>}
+                />
+                <StatCard
+                    title="Net Ciro"
                     value={fmt(totals.revenue)}
                     change={revTrend.text}
                     icon={DollarSign}
                     trend={revTrend.trend}
+                    tooltip={<><b>Net Ciro:</b><br />Geriye dönük uygulanan kampanya, havale indirimleri vb. kesintilerin düşülmüş halidir. Müşterinin işletmeye ödediği nihai geçerli rakamı yansıtır.</>}
                 />
                 <StatCard
-                    title={t.netProfit}
+                    title="Satış Adedi"
+                    value={totals.quantity.toLocaleString('tr-TR')}
+                    change={qtyTrend.text}
+                    icon={Package}
+                    trend={qtyTrend.trend}
+                    tooltip={<><b>Satış Adedi:</b><br />İlgili dönemde satışı tamamlanan fiziki (orijinal) ürün adetlerinin toplam sayısını gösterir.</>}
+                />
+                <StatCard
+                    title="Brüt Kar"
+                    value={fmt(grossProfit)}
+                    change={grossProfitTrend.text}
+                    icon={Wallet}
+                    trend={grossProfitTrend.trend}
+                    tooltip={<><b>Brüt Kar (Ürün Marjı):</b><br />Toplam cirodan <b>ürünlerin doğrudan alış maliyetinin (COGS)</b> çıkarılmasıyla bulunur. Henüz operasyon, reklam ve komisyon giderleri düşülmemiş ham gelirdir.</>}
+                />
+                <StatCard
+                    title="Net Kar"
                     value={fmt(netProfit)}
                     change={profitTrend.text}
                     icon={TrendingUp}
                     trend={profitTrend.trend}
+                    tooltip={<><b>Net Kar:</b><br />Toplam cirodan; Ürün Alış Maliyeti, Komisyon, Çıkan KDV Farkı, Kargo, Reklam ve Genel Sabit Giderler (Maaş/Kira vb.) tamamen çıkarılarak hesabınıza kalan son tutardır.</>}
                 />
                 <StatCard
-                    title={t.ebitda}
+                    title="FAVÖK"
                     value={fmt(ebitda)}
                     change={ebitdaTrend.text}
-                    icon={DollarSign}
+                    icon={Activity}
                     trend={ebitdaTrend.trend}
+                    tooltip={<><b>FAVÖK (EBITDA):</b><br />Net Kâra, Ödenen KDV ve Finansal Faizlerin muhasebesel olarak geri eklenmesiyle bulunan Ana Faaliyet kârlılığıdır. Nakit yaratma kapasitesinin gerçek göstergesidir.</>}
                 />
                 <StatCard
-                    title={t.roi}
+                    title="Yatırım Getirisi (ROI)"
                     value={`${roi.toFixed(1)}%`}
                     change={roiTrend.text}
                     icon={Percent}
                     trend={roiTrend.trend}
+                    tooltip={<><b>ROI:</b><br />Koyduğunuz sermayenin dönüş oranıdır. Toplam masraf (Ürün, Reklam ve Operasyon) olarak yatırdığınız her 100 TL'ye karşılık Net Kar olarak kaç TL kazandığınızı gösterir.</>}
                 />
             </div>
 
             {/* Sales & Profit Chart — filtered data */}
             <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-                <h3 className="text-lg font-semibold text-slate-900 mb-6">{t.salesVsProfit}</h3>
+                <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
+                    <h3 className="text-lg font-semibold text-slate-900">{t.salesVsProfit}</h3>
+                    <div className="flex flex-wrap items-center gap-5 text-[12px] font-semibold text-slate-600">
+                        <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full bg-[#10b981]"></div> Brüt Kar (Günlük)</div>
+                        <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full bg-[#f43f5e]"></div> Genel Kar / Zarar</div>
+                        <div className="flex items-center gap-1.5"><div className="w-4 border-t-2 border-dashed border-[#14b8a6]"></div> Kümülatif Brüt Kar</div>
+                        <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full bg-[#6366f1]"></div> Net Ciro (Günlük)</div>
+                    </div>
+                </div>
                 <div className="h-[350px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={chartData}>
+                        <ComposedChart data={chartData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
                             <defs>
-                                <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.15} />
-                                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                                <linearGradient id="colorNetCiro" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="5%" stopColor="#818cf8" stopOpacity={0.25} />
+                                    <stop offset="95%" stopColor="#818cf8" stopOpacity={0} />
                                 </linearGradient>
-                                <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.15} />
-                                    <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                                <linearGradient id="colorBrutKar" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="5%" stopColor="#34d399" stopOpacity={0.4} />
+                                    <stop offset="95%" stopColor="#34d399" stopOpacity={0.05} />
                                 </linearGradient>
                             </defs>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
                             <XAxis
                                 dataKey="date"
                                 tickFormatter={(str) => new Date(str).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })}
-                                tick={{ fill: '#9ca3af', fontSize: 12 }}
+                                tick={{ fill: '#9ca3af', fontSize: 11 }}
                                 tickLine={false}
                                 axisLine={false}
-                                tickMargin={10}
-                                interval={6}
-                                dy={10}
+                                tickMargin={12}
+                                minTickGap={20}
                             />
                             <YAxis
-                                tick={{ fill: '#9ca3af', fontSize: 12 }}
+                                tick={{ fill: '#9ca3af', fontSize: 11 }}
                                 tickLine={false}
                                 axisLine={false}
-                                tickFormatter={(value) => `₺${value}`}
+                                tickFormatter={(value) => `₺${value > 1000 || value < -1000 ? (value/1000).toFixed(0) + 'k' : value}`}
+                                domain={['auto', 'auto']}
                             />
                             <Tooltip
                                 content={<CustomTooltip />}
                                 cursor={{ stroke: '#e5e7eb', strokeWidth: 1, strokeDasharray: '4 4' }}
                             />
-                            <Area
+                            
+                            {/* Zero Axis Reference Line */}
+                            <ReferenceLine y={0} stroke="#94a3b8" strokeOpacity={0.5} strokeWidth={2} />
+                            
+                            {/* Break-Even Vertical Line */}
+                            {breakEvenDate && (
+                                <ReferenceLine 
+                                    x={breakEvenDate} 
+                                    stroke="#ec4899" 
+                                    strokeDasharray="4 4" 
+                                    label={{ position: 'top', value: 'Başabaş', fill: '#be185d', fontSize: 12, fontWeight: 700 }} 
+                                />
+                            )}
+                            
+                            {/* Cumulative Gross Profit Line */}
+                            <Line
                                 type="monotone"
-                                dataKey="profit"
-                                stroke="#10b981"
+                                dataKey="brutKar"
+                                name="Kümülatif Brüt Kar"
+                                stroke="#14b8a6"
                                 strokeWidth={2}
-                                fillOpacity={1}
-                                fill="url(#colorProfit)"
-                                name="Net Kar"
+                                strokeDasharray="3 3"
                                 dot={false}
-                                activeDot={{ r: 6, strokeWidth: 4, stroke: '#ffffff' }}
+                                activeDot={{ r: 4, strokeWidth: 2, stroke: '#ffffff', fill: '#14b8a6' }}
                             />
+
+                            {/* Areas for Revenue and Gross Profit (Now showing DAILY values) */}
                             <Area
                                 type="monotone"
-                                dataKey="sales"
+                                dataKey="dailyCiro"
+                                name="Net Ciro (Günlük)"
                                 stroke="#6366f1"
                                 strokeWidth={2}
                                 fillOpacity={1}
-                                fill="url(#colorSales)"
-                                name="Toplam Satış"
+                                fill="url(#colorNetCiro)"
                                 dot={false}
-                                activeDot={{ r: 6, strokeWidth: 4, stroke: '#ffffff' }}
+                                activeDot={{ r: 4, strokeWidth: 2, stroke: '#ffffff' }}
                             />
-                        </AreaChart>
+                            <Area
+                                type="monotone"
+                                dataKey="dailyBrutKar"
+                                name="Brüt Kar (Günlük)"
+                                stroke="#10b981"
+                                strokeWidth={2}
+                                fillOpacity={1}
+                                fill="url(#colorBrutKar)"
+                                dot={false}
+                                activeDot={{ r: 4, strokeWidth: 2, stroke: '#ffffff' }}
+                            />
+
+                            {/* Net Status Line (Starts negative, goes up) */}
+                            <Line 
+                                type="monotone" 
+                                dataKey="netDurum" 
+                                name="Genel Kar / Zarar" 
+                                stroke="#f43f5e" 
+                                strokeWidth={3}
+                                dot={false}
+                                activeDot={{ r: 6, strokeWidth: 3, stroke: '#ffffff', fill: '#f43f5e' }}
+                            />
+                        </ComposedChart>
                     </ResponsiveContainer>
                 </div>
             </div>
@@ -834,8 +1028,11 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
                         };
                         const channelMap = {};
                         filteredOrders.forEach(o => {
-                            if (!channelMap[o.channel]) channelMap[o.channel] = { revenue: 0, count: 0 };
-                            channelMap[o.channel].revenue += o.revenue;
+                            if (!channelMap[o.channel]) channelMap[o.channel] = { revenue: 0, grossRevenue: 0, discount: 0, profit: 0, count: 0 };
+                            channelMap[o.channel].revenue += o.revenue || 0;
+                            channelMap[o.channel].grossRevenue += o.grossRevenue || o.revenue || 0;
+                            channelMap[o.channel].discount += o.discount || 0;
+                            channelMap[o.channel].profit += o.profit || 0;
                             channelMap[o.channel].count += 1;
                         });
                         const sorted = Object.entries(channelMap)
@@ -859,18 +1056,43 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
                                     const isTop = idx === 0;
                                     return (
                                         <div key={name} className={`${style.bg} rounded-xl p-4 border ${style.border} flex flex-col justify-between`}>
-                                            <div className="flex justify-between items-start mb-2">
-                                                <span className={`text-xs font-bold ${style.label} bg-white border ${style.labelBorder} px-2 py-0.5 rounded`}>{name}</span>
-                                                <span className={`text-[10px] font-bold flex items-center gap-1 ${isTop ? 'text-green-600' : 'text-gray-400'}`}>
+                                            <div className="flex justify-between items-start mb-4">
+                                                <span className={`text-xs font-bold ${style.label} bg-white border ${style.labelBorder} px-2 py-0.5 rounded shadow-sm`}>{name}</span>
+                                                <span className={`text-[10px] font-bold flex items-center gap-1 ${isTop ? 'text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded' : 'text-slate-500 bg-white px-1.5 py-0.5 rounded border border-slate-200'}`}>
                                                     {isTop ? (
                                                         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>
                                                     ) : null}
-                                                    {isTop ? 'En Yüksek' : `%${sharePct} Pay`}
+                                                    {isTop ? 'En Yüksek' : `%${sharePct} Ciro Payı`}
                                                 </span>
                                             </div>
-                                            <div>
-                                                <p className="text-2xl font-bold text-gray-900">{fmtK(s.revenue)}</p>
-                                                <p className="text-[10px] text-gray-500 mt-1">{s.count.toLocaleString('tr-TR')} İşlem / Dönem</p>
+                                            
+                                            <div className="space-y-3">
+                                                {/* Header Net Ciro */}
+                                                <div>
+                                                    <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">Net Ciro</p>
+                                                    <div className="flex items-baseline gap-2">
+                                                        <p className="text-2xl font-bold text-gray-900">{fmtK(s.revenue)}</p>
+                                                        <p className="text-[10px] text-slate-400 font-medium">/ {s.count.toLocaleString('tr-TR')} İşlem</p>
+                                                    </div>
+                                                </div>
+
+                                                {/* Detailed Breakdown Grid */}
+                                                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/50">
+                                                    <div>
+                                                        <p className="text-[9px] text-slate-500 mb-0.5">Brüt Satış</p>
+                                                        <p className="text-xs font-semibold text-slate-700">{fmtK(s.grossRevenue)}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-[9px] text-slate-500 mb-0.5">İndirimler</p>
+                                                        <p className="text-xs font-semibold text-rose-600">-{fmtK(s.discount)}</p>
+                                                    </div>
+                                                    <div className="col-span-2 pt-1">
+                                                        <p className="text-[9px] text-slate-500 mb-0.5">Kanal Kârı (Net)</p>
+                                                        <p className={`text-sm font-bold ${s.profit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                                            {s.profit > 0 ? '+' : ''}{fmtK(s.profit)}
+                                                        </p>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                     );
