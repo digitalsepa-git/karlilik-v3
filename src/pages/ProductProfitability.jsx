@@ -17,6 +17,7 @@ const generateSparklineData = (startValue, endValue) => {
 import { useData } from '../context/DataContext';
 import { getFallbackProductImage } from '../hooks/useOrders';
 import { useGoogleAnalytics } from '../hooks/useGoogleAnalytics';
+import { expensesData, calculateDailyExpense } from '../data/expensesData';
 
 export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
     // Utility Formatting Functions
@@ -236,17 +237,32 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
 
         // Calculate Totals Directly From Filtered Orders (Guarantees exactly match with Dashboard)
         let sumSales = 0, sumCOGS = 0, sumRetAmt = 0, sumRetQty = 0;
+        let sumShipping = 0, sumCommission = 0, sumTax = 0;
         
         filteredOrders.forEach(order => {
             const isReturn = order.statusObj?.label === 'İade' || order.statusObj?.label === 'İptal' || order.statusObj?.label === 'CANCELLED' || order.statusObj?.label === 'REFUNDED';
             if (isReturn) {
-                sumRetAmt += Math.abs(order.revenue || 0); // using Math.abs just in case Dashboard relies on negative sign elsewhere
+                sumRetAmt += Math.abs(order.revenue || 0);
                 sumRetQty += order.quantity || 1;
-            } else {
-                sumSales += order.revenue || 0;
-                sumCOGS += order.cost || 0;
             }
+            
+            // Unconditionally add ALL exact matched properties to 100% align with Dashboard Macro-Ledger!
+            sumSales += order.revenue || 0;
+            sumCOGS += order.cogs || 0;
+            sumShipping += order.shipping || 0;
+            sumCommission += order.commission || 0;
+            sumTax += order.tax || 0;
         });
+
+        // Derive ABC prorated fixed costs
+        const _diffDays = Math.max(1, Math.ceil((dateEnd - dateStart) / (1000 * 60 * 60 * 24)));
+        const proratedFixedCost = expensesData
+            .filter(e => e.valueType === 'amount' && e.category !== 'tax' && e.category !== 'finance')
+            .reduce((sum, e) => sum + calculateDailyExpense(e), 0) * _diffDays;
+
+        const proratedTaxAndFinance = expensesData
+            .filter(e => e.valueType === 'amount' && (e.category === 'tax' || e.category === 'finance'))
+            .reduce((sum, e) => sum + calculateDailyExpense(e), 0) * _diffDays;
 
         // Third Pass: Table Products
         const tableProducts = computedProducts.map(p => {
@@ -286,13 +302,17 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
             TABLE_PRODUCTS: tableProducts, 
             totalSales: sumSales, 
             totalCOGS: sumCOGS, 
+            totalShipping: sumShipping,
+            totalCommission: sumCommission,
+            totalTax: sumTax,
+            totalFixedCost: proratedFixedCost + proratedTaxAndFinance,
             totalReturnAmt: sumRetAmt, 
             totalReturnQty: sumRetQty,
             TOTAL_AD_BUDGET
         };
-    }, [fetchedProducts, filteredOrders, filteredOrdersPrev, ga]);
+    }, [fetchedProducts, filteredOrders, filteredOrdersPrev, ga, dateStart, dateEnd]);
 
-    const { PRODUCTS, TABLE_PRODUCTS, totalSales, totalCOGS, totalReturnAmt, totalReturnQty, TOTAL_AD_BUDGET } = computedData;
+    const { PRODUCTS, TABLE_PRODUCTS, totalSales, totalCOGS, totalShipping, totalCommission, totalTax, totalFixedCost, totalReturnAmt, totalReturnQty, TOTAL_AD_BUDGET } = computedData;
     const [selectedExpense, setSelectedExpense] = useState(null);
     const [expandedRows, setExpandedRows] = useState(new Set());
 
@@ -554,18 +574,17 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
 
 
 
-    // --- UP5+UP6 Fix: Compute Sankey values from real PRODUCTS data ---
-    // Gross Revenue should include returns, since they are deductions from the initial full amount.
-    const _sankeyRevenue = Math.round(totalSales + totalReturnAmt);
+    // --- UP5+UP6 Fix: Compute Sankey values perfectly matching Dashboard ---
+    const _sankeyRevenue = Math.round(totalSales);
     const _sankeyReturns = Math.round(totalReturnAmt);
-    const _sankeyCOGS = Math.round(PRODUCTS.reduce((acc, p) => acc + (p.cogs * (p.unitsSold > 0 ? 1 : 1)), 0)); 
-    // Wait, the products object holds totals natively now!
-    const _sankeyCOGS_Real = Math.round(PRODUCTS.reduce((acc, p) => acc + p.cogs, 0));
-    const _sankeyAds = Math.round(PRODUCTS.reduce((acc, p) => acc + p.adSpend, 0));
-    const _sankeyCommission = Math.round(PRODUCTS.reduce((acc, p) => acc + p.commission, 0));
-    const _sankeyShipping = Math.round(PRODUCTS.reduce((acc, p) => acc + p.shipping, 0));
-    // Net profit is the remaining amount after all costs/returns are deducted from Gross Revenue
-    const _sankeyNetProfit = Math.max(0, _sankeyRevenue - _sankeyReturns - _sankeyCOGS_Real - _sankeyAds - _sankeyShipping - _sankeyCommission);
+    const _sankeyCOGS_Real = Math.round(totalCOGS);
+    const _sankeyAds = Math.round(TOTAL_AD_BUDGET);
+    const _sankeyCommission = Math.round(totalCommission);
+    const _sankeyShipping = Math.round(totalShipping);
+    const _sankeyTax = Math.round(totalTax);
+    const _sankeyFixed = Math.round(totalFixedCost);
+    // 100% Macro Accountant Net Profit matching Dashboard EXACTLY
+    const _sankeyNetProfit = Math.max(0, _sankeyRevenue - _sankeyCOGS_Real - _sankeyAds - _sankeyShipping - _sankeyCommission - _sankeyTax - _sankeyFixed);
 
     const _pct = (v) => _sankeyRevenue > 0 ? Math.round((v / _sankeyRevenue) * 100) : 0;
 
@@ -577,6 +596,8 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
             { name: 'Pazarlama', type: 'target', icon: Megaphone, color: '#f59e0b', value: _sankeyAds, percent: _pct(_sankeyAds) },
             { name: 'Lojistik', type: 'target', icon: Truck, color: '#3b82f6', value: _sankeyShipping, percent: _pct(_sankeyShipping) },
             { name: 'Komisyon', type: 'target', icon: CreditCard, color: '#a855f7', value: _sankeyCommission, percent: _pct(_sankeyCommission) },
+            { name: 'Vergi Kesintisi', type: 'target', icon: Database, color: '#ef0452', value: _sankeyTax, percent: _pct(_sankeyTax) },
+            { name: 'Sabit Giderler', type: 'target', icon: Layers, color: '#444444', value: _sankeyFixed, percent: _pct(_sankeyFixed) },
             { name: 'NET KAR', type: 'target', icon: CheckCircle, color: '#10b981', value: Math.max(0, _sankeyNetProfit), percent: Math.max(0, _pct(_sankeyNetProfit)) }
         ],
         links: [
@@ -585,7 +606,9 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
             { source: 0, target: 3, value: Math.max(1, _sankeyAds) },
             { source: 0, target: 4, value: Math.max(1, _sankeyShipping) },
             { source: 0, target: 5, value: Math.max(1, _sankeyCommission) },
-            { source: 0, target: 6, value: Math.max(1, _sankeyNetProfit) }
+            { source: 0, target: 6, value: Math.max(1, _sankeyTax) },
+            { source: 0, target: 7, value: Math.max(1, _sankeyFixed) },
+            { source: 0, target: 8, value: Math.max(1, _sankeyNetProfit) }
         ]
     };
 
