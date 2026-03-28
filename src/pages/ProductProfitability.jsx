@@ -95,7 +95,7 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
     // 2. Dynamic Computation Block
     const computedData = React.useMemo(() => {
         if (!fetchedProducts || fetchedProducts.length === 0) {
-            return { PRODUCTS: [], TABLE_PRODUCTS: [], totalSales: 0, totalCOGS: 0, totalReturnAmt: 0, totalReturnQty: 0, TOTAL_AD_BUDGET: 0 };
+            return { PRODUCTS: [], TABLE_PRODUCTS: [], totalSales: 0, totalCOGS: 0, totalShipping: 0, totalCommission: 0, totalTax: 0, totalFixedCost: 0, totalReturnAmt: 0, totalReturnQty: 0, TOTAL_AD_BUDGET: 0 };
         }
 
         // Aggregate order data by product name (or SKU) using filteredOrders
