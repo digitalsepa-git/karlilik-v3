@@ -35,7 +35,7 @@ src/server/integrations.json
 
 # Temp/debug files
 v2-live/
-dashboard/
+/dashboard/
 *.cjs
 test-*.js
 debug-*.js

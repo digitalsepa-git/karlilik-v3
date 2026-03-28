@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Financial Profitability Flow</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; padding: 40px; }
+    </style>
+</head>
+<body>
+
+    <!-- Widget Container -->
+    <div class="max-w-5xl mx-auto bg-white rounded-xl border border-gray-200 shadow-sm p-8">
+        
+        <!-- 1. Top Header: Summary Stats -->
+        <div class="flex flex-col md:flex-row justify-between items-center mb-10 pb-6 border-b border-gray-100 gap-6">
+            
+            <!-- Left: Total Revenue -->
+            <div class="flex items-center gap-4">
+                <div class="p-3 bg-indigo-50 rounded-xl text-indigo-600">
+                    <!-- Icon: Database -->
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+                </div>
+                <div>
+                    <div class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-1">Toplam Ciro</div>
+                    <div class="text-3xl font-black text-slate-800 tracking-tight">₺1.000.000</div>
+                </div>
+            </div>
+
+            <!-- Right: Distribution Bar -->
+            <div class="w-full md:w-1/2 max-w-lg">
+                <div class="flex justify-between text-xs font-bold uppercase tracking-wide mb-2 px-1">
+                    <span class="text-rose-500">Giderler %77</span>
+                    <span class="text-emerald-600">Net Kar %23</span>
+                </div>
+                <!-- Progress Bar -->
+                <div class="h-4 rounded-full bg-gray-100 overflow-hidden flex shadow-inner">
+                    <!-- Expenses Segment -->
+                    <div style="width: 77%" class="bg-gradient-to-r from-red-400 via-orange-400 to-amber-400 relative group cursor-pointer">
+                        <div class="absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                    </div>
+                    <!-- Profit Segment -->
+                    <div style="width: 23%" class="bg-gradient-to-r from-emerald-500 to-teal-400 relative group cursor-pointer">
+                        <div class="absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. Main Flow Diagram -->
+        <!-- Grid Layout: Source (Left) | Flow (Middle) | Destinations (Right) -->
+        <div class="grid grid-cols-[240px_1fr_240px] gap-0 relative min-h-[500px]">
+
+            <!-- Column 1: Source Card -->
+            <div class="flex items-center relative z-10">
+                <div class="w-full bg-white border border-gray-200 p-6 rounded-2xl shadow-lg relative group transition-all hover:-translate-y-1 hover:shadow-xl cursor-default">
+                    <!-- Left Accent -->
+                    <div class="absolute top-0 left-0 w-2 h-full bg-indigo-500 rounded-l-2xl"></div>
+                    
+                    <div class="flex items-center gap-3 mb-4 text-slate-500">
+                        <div class="p-2 bg-slate-50 rounded-lg">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>
+                        </div>
+                        <span class="text-xs font-bold uppercase tracking-wider">Başlangıç</span>
+                    </div>
+                    <div class="text-3xl font-black text-slate-900 mb-1">₺1.0M</div>
+                    <div class="text-xs font-medium text-slate-400">%100 Gelir</div>
+                </div>
+            </div>
+
+            <!-- Column 2: The SVG Flow Lines -->
+            <!-- Positioned absolutely to span the middle visually, but logic assumes vertical centering -->
+            <div class="relative w-full h-full pointer-events-none">
+                <svg class="absolute inset-0 w-full h-full" preserveAspectRatio="none">
+                    <defs>
+                        <!-- Gradients for each flow -->
+                        <linearGradient id="grad-red" x1="0%" y1="0%" x2="100%" y2="0%">
+                            <stop offset="0%" stop-color="#cbd5e1" stop-opacity="0.3" />
+                            <stop offset="100%" stop-color="#ef4444" stop-opacity="0.6" />
+                        </linearGradient>
+                        <linearGradient id="grad-orange" x1="0%" y1="0%" x2="100%" y2="0%">
+                            <stop offset="0%" stop-color="#cbd5e1" stop-opacity="0.3" />
+                            <stop offset="100%" stop-color="#f97316" stop-opacity="0.6" />
+                        </linearGradient>
+                        <linearGradient id="grad-amber" x1="0%" y1="0%" x2="100%" y2="0%">
+                            <stop offset="0%" stop-color="#cbd5e1" stop-opacity="0.3" />
+                            <stop offset="100%" stop-color="#f59e0b" stop-opacity="0.6" />
+                        </linearGradient>
+                        <linearGradient id="grad-blue" x1="0%" y1="0%" x2="100%" y2="0%">
+                            <stop offset="0%" stop-color="#cbd5e1" stop-opacity="0.3" />
+                            <stop offset="100%" stop-color="#3b82f6" stop-opacity="0.6" />
+                        </linearGradient>
+                        <linearGradient id="grad-purple" x1="0%" y1="0%" x2="100%" y2="0%">
+                            <stop offset="0%" stop-color="#cbd5e1" stop-opacity="0.3" />
+                            <stop offset="100%" stop-color="#a855f7" stop-opacity="0.6" />
+                        </linearGradient>
+                        <linearGradient id="grad-emerald" x1="0%" y1="0%" x2="100%" y2="0%">
+                            <stop offset="0%" stop-color="#cbd5e1" stop-opacity="0.3" />
+                            <stop offset="100%" stop-color="#10b981" stop-opacity="0.8" />
+                        </linearGradient>
+                    </defs>
+
+                    <!-- 
+                        PATHS:
+                        Start Point (Left): x=0, y=50% (Center of grid)
+                        End Points (Right): Calculated based on 6 items stack.
+                        Item 1: 8.3%, Item 2: 25%, Item 3: 41.6%, Item 4: 58.3%, Item 5: 75%, Item 6: 91.6%
+                     -->
+                    
+                    <!-- 1. Iadeler (Red) -->
+                    <path d="M0,250 C150,250 150,40 300,40" stroke="url(#grad-red)" stroke-width="24" fill="none" class="opacity-60 hover:opacity-100 hover:stroke-[30] transition-all duration-300 cursor-pointer pointer-events-auto"/>
+                    
+                    <!-- 2. Urun Maliyeti (Orange) - Thickest -->
+                    <path d="M0,250 C150,250 150,125 300,125" stroke="url(#grad-orange)" stroke-width="60" fill="none" class="opacity-60 hover:opacity-100 hover:stroke-[64] transition-all duration-300 cursor-pointer pointer-events-auto"/>
+
+                    <!-- 3. Pazarlama (Amber) -->
+                    <path d="M0,250 C150,250 150,210 300,210" stroke="url(#grad-amber)" stroke-width="40" fill="none" class="opacity-60 hover:opacity-100 hover:stroke-[44] transition-all duration-300 cursor-pointer pointer-events-auto"/>
+
+                    <!-- 4. Lojistik (Blue) -->
+                    <path d="M0,250 C150,250 150,295 300,295" stroke="url(#grad-blue)" stroke-width="20" fill="none" class="opacity-60 hover:opacity-100 hover:stroke-[24] transition-all duration-300 cursor-pointer pointer-events-auto"/>
+
+                    <!-- 5. Komisyon (Purple) -->
+                    <path d="M0,250 C150,250 150,380 300,380" stroke="url(#grad-purple)" stroke-width="10" fill="none" class="opacity-60 hover:opacity-100 hover:stroke-[14] transition-all duration-300 cursor-pointer pointer-events-auto"/>
+
+                    <!-- 6. NET KAR (Emerald) -->
+                    <path d="M0,250 C150,250 150,465 300,465" stroke="url(#grad-emerald)" stroke-width="46" fill="none" class="opacity-60 hover:opacity-100 hover:stroke-[52] transition-all duration-300 cursor-pointer pointer-events-auto"/>
+
+                </svg>
+            </div>
+
+            <!-- Column 3: Destination Cards -->
+            <div class="flex flex-col justify-between py-2 relative z-10 gap-3">
+                
+                <!-- 1. Iadeler -->
+                <div class="bg-white border border-gray-100 border-l-4 border-l-red-500 p-3 rounded-lg shadow-sm hover:shadow-md transition-shadow flex justify-between items-center group cursor-pointer">
+                    <div class="flex items-center gap-2">
+                        <div class="p-1.5 bg-red-50 text-red-500 rounded-md group-hover:bg-red-100 transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                        </div>
+                        <div>
+                            <div class="text-[10px] uppercase font-bold text-slate-500">İadeler</div>
+                            <div class="text-xs font-semibold text-slate-800">120K ₺</div>
+                        </div>
+                    </div>
+                    <div class="text-sm font-bold text-red-500">%12</div>
+                </div>
+
+                <!-- 2. Urun Maliyeti -->
+                <div class="bg-white border border-gray-100 border-l-4 border-l-orange-500 p-3 rounded-lg shadow-sm hover:shadow-md transition-shadow flex justify-between items-center group cursor-pointer">
+                    <div class="flex items-center gap-2">
+                        <div class="p-1.5 bg-orange-50 text-orange-500 rounded-md group-hover:bg-orange-100 transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+                        </div>
+                        <div>
+                            <div class="text-[10px] uppercase font-bold text-slate-500">Ürün Maliyeti</div>
+                            <div class="text-xs font-semibold text-slate-800">300K ₺</div>
+                        </div>
+                    </div>
+                    <div class="text-sm font-bold text-orange-500">%30</div>
+                </div>
+
+                <!-- 3. Pazarlama -->
+                <div class="bg-white border border-gray-100 border-l-4 border-l-amber-500 p-3 rounded-lg shadow-sm hover:shadow-md transition-shadow flex justify-between items-center group cursor-pointer">
+                    <div class="flex items-center gap-2">
+                        <div class="p-1.5 bg-amber-50 text-amber-500 rounded-md group-hover:bg-amber-100 transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>
+                        </div>
+                        <div>
+                            <div class="text-[10px] uppercase font-bold text-slate-500">Pazarlama</div>
+                            <div class="text-xs font-semibold text-slate-800">200K ₺</div>
+                        </div>
+                    </div>
+                    <div class="text-sm font-bold text-amber-500">%20</div>
+                </div>
+
+                <!-- 4. Lojistik -->
+                <div class="bg-white border border-gray-100 border-l-4 border-l-blue-500 p-3 rounded-lg shadow-sm hover:shadow-md transition-shadow flex justify-between items-center group cursor-pointer">
+                    <div class="flex items-center gap-2">
+                        <div class="p-1.5 bg-blue-50 text-blue-500 rounded-md group-hover:bg-blue-100 transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="2" ry="2"/><polyline points="16 8 20 8 23 11 23 16 16 16"/><line x1="16" y1="16" x2="16" y2="10"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+                        </div>
+                        <div>
+                            <div class="text-[10px] uppercase font-bold text-slate-500">Lojistik</div>
+                            <div class="text-xs font-semibold text-slate-800">100K ₺</div>
+                        </div>
+                    </div>
+                    <div class="text-sm font-bold text-blue-500">%10</div>
+                </div>
+
+                <!-- 5. Komisyon -->
+                <div class="bg-white border border-gray-100 border-l-4 border-l-purple-500 p-3 rounded-lg shadow-sm hover:shadow-md transition-shadow flex justify-between items-center group cursor-pointer">
+                    <div class="flex items-center gap-2">
+                        <div class="p-1.5 bg-purple-50 text-purple-500 rounded-md group-hover:bg-purple-100 transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>
+                        </div>
+                        <div>
+                            <div class="text-[10px] uppercase font-bold text-slate-500">Komisyon</div>
+                            <div class="text-xs font-semibold text-slate-800">50K ₺</div>
+                        </div>
+                    </div>
+                    <div class="text-sm font-bold text-purple-500">%5</div>
+                </div>
+
+                <!-- 6. NET KAR (Emphasized) -->
+                <div class="bg-white border-2 border-emerald-100 border-l-4 border-l-emerald-500 p-4 rounded-xl shadow-md hover:shadow-lg transition-all transform hover:-translate-x-1 flex justify-between items-center group cursor-pointer mt-2">
+                    <div class="flex items-center gap-3">
+                        <div class="p-2 bg-emerald-100 text-emerald-600 rounded-lg group-hover:bg-emerald-200 transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                        </div>
+                        <div>
+                            <div class="text-xs uppercase font-extrabold text-slate-500 tracking-wider">NET KAR</div>
+                            <div class="text-lg font-black text-slate-900">230K ₺</div>
+                        </div>
+                    </div>
+                    <div class="text-lg font-black text-emerald-600">%23</div>
+                </div>
+
+            </div>
+        </div>
+
+    </div>
+
+</body>
+</html>
