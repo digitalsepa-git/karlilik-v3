@@ -919,8 +919,8 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                             </div>
 
                             {/* Column 2: The Fluid SVG Flow (Fills Gap) */}
-                            <div className="flex-1 h-[400px] relative min-w-[200px] z-0">
-                                <svg className="absolute inset-0 w-full h-full overflow-visible" viewBox="0 0 100 400" preserveAspectRatio="none">
+                            <div className="flex-1 h-[530px] relative min-w-[200px] z-0">
+                                <svg className="absolute inset-0 w-full h-full overflow-visible" viewBox="0 0 100 530" preserveAspectRatio="none">
                                     <defs>
                                         <linearGradient id="grad-red" x1="0%" y1="0%" x2="100%" y2="0%">
                                             <stop offset="0%" stopColor="#ef4444" stopOpacity="0.4" />
@@ -941,6 +941,14 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                         <linearGradient id="grad-purple" x1="0%" y1="0%" x2="100%" y2="0%">
                                             <stop offset="0%" stopColor="#a855f7" stopOpacity="0.4" />
                                             <stop offset="100%" stopColor="#a855f7" stopOpacity="0.8" />
+                                        </linearGradient>
+                                        <linearGradient id="grad-rose" x1="0%" y1="0%" x2="100%" y2="0%">
+                                            <stop offset="0%" stopColor="#ef0452" stopOpacity="0.4" />
+                                            <stop offset="100%" stopColor="#ef0452" stopOpacity="0.8" />
+                                        </linearGradient>
+                                        <linearGradient id="grad-slate" x1="0%" y1="0%" x2="100%" y2="0%">
+                                            <stop offset="0%" stopColor="#444444" stopOpacity="0.4" />
+                                            <stop offset="100%" stopColor="#444444" stopOpacity="0.8" />
                                         </linearGradient>
                                         <linearGradient id="grad-emerald" x1="0%" y1="0%" x2="100%" y2="0%">
                                             <stop offset="0%" stopColor="#10b981" stopOpacity="0.4" />
@@ -972,7 +980,7 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                         const startX = 0;
 
                                         // 3. Destination Position (Right)
-                                        const targetYs = [30, 96, 162, 228, 294, 365];
+                                        const targetYs = [30, 96, 162, 228, 294, 360, 426, 492];
                                         const targetY = targetYs[i] || 30 + (i * 66);
                                         // END at 100 (Right edge of fluid container)
                                         const endX = 100;
@@ -1001,7 +1009,9 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                                 i === 1 ? "grad-orange" :
                                                     i === 2 ? "grad-amber" :
                                                         i === 3 ? "grad-blue" :
-                                                            i === 4 ? "grad-purple" : "grad-emerald";
+                                                            i === 4 ? "grad-purple" : 
+                                                                i === 5 ? "grad-rose" :
+                                                                    i === 6 ? "grad-slate" : "grad-emerald";
 
                                         return (
                                             <g key={i} className="group cursor-pointer">
@@ -1051,8 +1061,8 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                     onClick={() => setSelectedExpense({
                                         title: 'Ürün Maliyeti',
                                         color: 'orange',
-                                        value: _sankeyCOGS,
-                                        percent: _pct(_sankeyCOGS),
+                                        value: _sankeyCOGS_Real,
+                                        percent: _pct(_sankeyCOGS_Real),
                                         subItems: []
                                     })}
                                     className="bg-white border border-gray-100 border-l-4 border-l-orange-500 p-2.5 rounded-lg shadow-sm hover:translate-y-[-2px] hover:shadow-md transition-all duration-200 cursor-pointer flex justify-between items-center group"
@@ -1063,10 +1073,10 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                         </div>
                                         <div>
                                             <div className="text-[9px] uppercase font-bold text-slate-500">Ürün Maliyeti</div>
-                                            <div className="text-[11px] font-semibold text-slate-800">{formatCompact(_sankeyCOGS)}</div>
+                                            <div className="text-[11px] font-semibold text-slate-800">{formatCompact(_sankeyCOGS_Real)}</div>
                                         </div>
                                     </div>
-                                    <div className="text-xs font-bold text-orange-500">%{_pct(_sankeyCOGS)}</div>
+                                    <div className="text-xs font-bold text-orange-500">%{_pct(_sankeyCOGS_Real)}</div>
                                 </div>
 
                                 {/* 3. Pazarlama */}
@@ -1138,7 +1148,53 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                     <div className="text-xs font-bold text-purple-500">%{_pct(_sankeyCommission)}</div>
                                 </div>
 
-                                {/* 6. NET KAR (Subtle Emphasis - Clean) */}
+                                {/* 6. Vergi */}
+                                <div
+                                    onClick={() => setSelectedExpense({
+                                        title: 'Vergi Kesintisi',
+                                        color: 'rose',
+                                        value: _sankeyTax,
+                                        percent: _pct(_sankeyTax),
+                                        subItems: []
+                                    })}
+                                    className="bg-white border border-gray-100 border-l-4 border-l-rose-500 p-2.5 rounded-lg shadow-sm hover:translate-y-[-2px] hover:shadow-md transition-all duration-200 cursor-pointer flex justify-between items-center group"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <div className="p-1 bg-rose-50 text-rose-500 rounded-md group-hover:bg-rose-100 transition-colors">
+                                            <Database className="w-3.5 h-3.5" />
+                                        </div>
+                                        <div>
+                                            <div className="text-[9px] uppercase font-bold text-slate-500">Vergi Kesintisi</div>
+                                            <div className="text-[11px] font-semibold text-slate-800">{formatCompact(_sankeyTax)}</div>
+                                        </div>
+                                    </div>
+                                    <div className="text-xs font-bold text-rose-500">%{_pct(_sankeyTax)}</div>
+                                </div>
+
+                                {/* 7. Sabit Giderler */}
+                                <div
+                                    onClick={() => setSelectedExpense({
+                                        title: 'Sabit Giderler',
+                                        color: 'slate',
+                                        value: _sankeyFixed,
+                                        percent: _pct(_sankeyFixed),
+                                        subItems: []
+                                    })}
+                                    className="bg-white border border-gray-100 border-l-4 border-l-slate-500 p-2.5 rounded-lg shadow-sm hover:translate-y-[-2px] hover:shadow-md transition-all duration-200 cursor-pointer flex justify-between items-center group"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <div className="p-1 bg-slate-50 text-slate-500 rounded-md group-hover:bg-slate-100 transition-colors">
+                                            <Layers className="w-3.5 h-3.5" />
+                                        </div>
+                                        <div>
+                                            <div className="text-[9px] uppercase font-bold text-slate-500">Sabit Giderler</div>
+                                            <div className="text-[11px] font-semibold text-slate-800">{formatCompact(_sankeyFixed)}</div>
+                                        </div>
+                                    </div>
+                                    <div className="text-xs font-bold text-slate-500">%{_pct(_sankeyFixed)}</div>
+                                </div>
+
+                                {/* 8. NET KAR (Subtle Emphasis - Clean) */}
                                 <div className="bg-emerald-50 border-l-4 border-emerald-500 p-2.5 rounded-lg shadow-sm hover:translate-y-[-2px] hover:shadow-md transition-all duration-200 flex justify-between items-center group cursor-pointer mt-1 relative z-20">
                                     <div className="flex items-center gap-2">
                                         <div className="p-1.5 bg-emerald-100 text-emerald-600 rounded-md group-hover:bg-emerald-200 transition-colors">
