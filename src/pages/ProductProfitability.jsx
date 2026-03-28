@@ -121,7 +121,7 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
         filteredOrders.forEach(order => {
             const prodName = order.productName || 'Bilinmeyen Ürün';
             if (!orderStats[prodName]) {
-                orderStats[prodName] = { unitsSold: 0, revenue: 0, returns: 0, returnAmt: 0, cogs: 0, shipping: 0, commission: 0 };
+                orderStats[prodName] = { unitsSold: 0, revenue: 0, returns: 0, returnAmt: 0, cogs: 0, shipping: 0, commission: 0, tax: 0 };
             }
             // Fallback to 1 unit if quantity is missing
             const qty = order.quantity || 1; 
@@ -138,8 +138,41 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                 orderStats[prodName].cogs += order.cogs || 0;
                 orderStats[prodName].shipping += order.shipping || 0;
                 orderStats[prodName].commission += order.commission || 0;
+                orderStats[prodName].tax += order.tax || 0;
             }
         });
+
+        // -------------------------------------------------------------
+        // PRE-PASS: Calculate Macro Totals & Overheads For 100% ABC Accuracy
+        // -------------------------------------------------------------
+        let sumSales = 0, sumCOGS = 0, sumRetAmt = 0, sumRetQty = 0;
+        let sumShipping = 0, sumCommission = 0, sumTax = 0;
+        
+        filteredOrders.forEach(order => {
+            const isReturn = order.statusObj?.label === 'İade' || order.statusObj?.label === 'İptal' || order.statusObj?.label === 'CANCELLED' || order.statusObj?.label === 'REFUNDED';
+            if (isReturn) {
+                sumRetAmt += Math.abs(order.revenue || 0);
+                sumRetQty += order.quantity || 1;
+            }
+            sumSales += order.revenue || 0;
+            sumCOGS += order.cogs || 0;
+            sumShipping += order.shipping || 0;
+            sumCommission += order.commission || 0;
+            sumTax += order.tax || 0;
+        });
+
+        // Derive ABC prorated fixed costs
+        const _diffDays = Math.max(1, Math.ceil((dateEnd - dateStart) / (1000 * 60 * 60 * 24)));
+        const proratedFixedCost = expensesData
+            .filter(e => e.valueType === 'amount' && e.category !== 'tax' && e.category !== 'finance')
+            .reduce((sum, e) => sum + calculateDailyExpense(e), 0) * _diffDays;
+
+        const proratedTaxAndFinance = expensesData
+            .filter(e => e.valueType === 'amount' && (e.category === 'tax' || e.category === 'finance'))
+            .reduce((sum, e) => sum + calculateDailyExpense(e), 0) * _diffDays;
+
+        const TOTAL_FIXED_OVERHEAD = proratedFixedCost + proratedTaxAndFinance;
+        // -------------------------------------------------------------
 
         const matchedOrderKeys = new Set();
         
@@ -166,10 +199,11 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
 
             const salesPrice = unitsSold > 0 ? stats.revenue / unitsSold : p.price;
 
-            // Load real aggregated costs from orderStats
+            // Load real aggregated costs from orderStats properly summing KDV values
             const cogs = stats.cogs || 0; 
             const shipping = stats.shipping || 0; 
             const commission = stats.commission || 0; 
+            const tax = stats.tax || 0;
             
             return {
                 ...p,
@@ -180,6 +214,7 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                 cogs,
                 shipping,
                 commission,
+                tax,
                 actualRevenue: stats.revenue,
                 prevRevenue: statsPrev.revenue,
                 returnQty: stats.returns,
@@ -191,15 +226,18 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
         const TOTAL_REVENUE = enrichedRawProducts.reduce((sum, p) => sum + p.actualRevenue, 0) || 1; // Prevent DivBy0
         const TOTAL_AD_BUDGET = ga?.totalAdCost || 0;
 
-        // Second Pass: Computed Products
+        // Second Pass: Computed Products with mathematically strict Allocation
         const computedProducts = enrichedRawProducts.map(product => {
             const revenueShare = TOTAL_REVENUE > 0 ? product.actualRevenue / TOTAL_REVENUE : 0;
             const allocatedAdBudget = revenueShare * TOTAL_AD_BUDGET;
+            const allocatedFixed = revenueShare * TOTAL_FIXED_OVERHEAD;
 
-            const totalVariableCosts = product.cogs + product.shipping + product.commission + allocatedAdBudget;
-            // Real net profit calculated based on explicit aggregated costs from matched orders
+            // Strict ABC computation explicitly summing physical COGS, Ads, Tax + ALL global expenses
+            const totalVariableCosts = product.cogs + product.shipping + product.commission + product.tax + allocatedAdBudget + allocatedFixed;
+            
+            // True corporate profit for this specific underlying product matching exactly the Dashboard scale
             const netProfit = product.actualRevenue > 0 ? product.actualRevenue - totalVariableCosts : 0;
-            const netProfitPerUnit = product.unitsSold > 0 ? netProfit / product.unitsSold : product.salesPrice;
+            const netProfitPerUnit = product.unitsSold > 0 ? netProfit / product.unitsSold : (product.salesPrice * 0.15); // generic fallback
 
             const margin = product.actualRevenue > 0 ? (netProfit / product.actualRevenue) * 100 : 0;
 
@@ -208,10 +246,10 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
             const prevTotalProfit = product.prevUnitsSold * prevNetProfitPerUnit;
 
             const trendValue = currentTotalProfit - prevTotalProfit;
-            const trendPercent = prevTotalProfit > 0 ? (trendValue / prevTotalProfit) * 100 : 0;
+            const trendPercent = prevTotalProfit > 0 ? (trendValue / Math.abs(prevTotalProfit)) * 100 : 0;
             
             const trendUnits = product.unitsSold - product.prevUnitsSold;
-            const trendUnitsPercent = product.prevUnitsSold > 0 ? (trendUnits / product.prevUnitsSold) * 100 : 0;
+            const trendUnitsPercent = product.prevUnitsSold > 0 ? (trendUnits / Math.abs(product.prevUnitsSold)) * 100 : 0;
 
             return {
                 ...product,
@@ -230,39 +268,10 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                 trendUnits,
                 trendUnitsPercent,
                 sparklineData: generateSparklineData(prevNetProfitPerUnit, netProfit),
-                fixedCost: 0,
+                fixedCost: allocatedFixed,
                 diagnosis: null
             };
         });
-
-        // Calculate Totals Directly From Filtered Orders (Guarantees exactly match with Dashboard)
-        let sumSales = 0, sumCOGS = 0, sumRetAmt = 0, sumRetQty = 0;
-        let sumShipping = 0, sumCommission = 0, sumTax = 0;
-        
-        filteredOrders.forEach(order => {
-            const isReturn = order.statusObj?.label === 'İade' || order.statusObj?.label === 'İptal' || order.statusObj?.label === 'CANCELLED' || order.statusObj?.label === 'REFUNDED';
-            if (isReturn) {
-                sumRetAmt += Math.abs(order.revenue || 0);
-                sumRetQty += order.quantity || 1;
-            }
-            
-            // Unconditionally add ALL exact matched properties to 100% align with Dashboard Macro-Ledger!
-            sumSales += order.revenue || 0;
-            sumCOGS += order.cogs || 0;
-            sumShipping += order.shipping || 0;
-            sumCommission += order.commission || 0;
-            sumTax += order.tax || 0;
-        });
-
-        // Derive ABC prorated fixed costs
-        const _diffDays = Math.max(1, Math.ceil((dateEnd - dateStart) / (1000 * 60 * 60 * 24)));
-        const proratedFixedCost = expensesData
-            .filter(e => e.valueType === 'amount' && e.category !== 'tax' && e.category !== 'finance')
-            .reduce((sum, e) => sum + calculateDailyExpense(e), 0) * _diffDays;
-
-        const proratedTaxAndFinance = expensesData
-            .filter(e => e.valueType === 'amount' && (e.category === 'tax' || e.category === 'finance'))
-            .reduce((sum, e) => sum + calculateDailyExpense(e), 0) * _diffDays;
 
         // Third Pass: Table Products
         const tableProducts = computedProducts.map(p => {
@@ -275,8 +284,12 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
             const sunit = p.unitsSold > 0 ? p.shipping / p.unitsSold : 0;
             const comunit = p.unitsSold > 0 ? p.commission / p.unitsSold : 0;
             const aunit = p.unitsSold > 0 ? p.adSpend / p.unitsSold : 0;
+            const taxunit = p.unitsSold > 0 ? p.tax / p.unitsSold : 0;
+            const fixedunit = p.unitsSold > 0 ? p.fixedCost / p.unitsSold : 0;
             
-            const unitVariableCost = sunit + comunit; // Table combines shipping and comm as "Değişken Gider"
+            // Değişken ve Sabit kalemleri table görseli için doğru sumla. 
+            // KDV dahil edildi!
+            const unitVariableCost = sunit + comunit + taxunit + fixedunit; 
 
             return {
                 ...p,
