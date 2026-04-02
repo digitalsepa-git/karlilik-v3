@@ -25,7 +25,9 @@ import {
     Trash2,
     PieChart,
     Sparkles,
-    Info
+    Info,
+    ChevronDown,
+    ChevronUp
 } from 'lucide-react';
 import {
     ScatterChart,
@@ -263,28 +265,55 @@ export const CompetitionAnalysis = () => {
         });
     };
 
-    const handleAddManualUrl = () => {
+    const handleAddManualUrl = async () => {
         if (!manualUrl.trim()) {
             alert("Lütfen geçerli bir ürün linki girin.");
             return;
         }
 
         setIsLoadingManual(true);
-
-        setTimeout(() => {
-            setIsLoadingManual(false);
-            // Set as Pending Candidate instead of adding directly
-            setPendingCandidate({
-                name: 'Yeni Satıcı (Trendyol)',
-                price: 1240.00,
-                source: 'Linkten Çekildi',
-                sourceType: 'manual',
-                url: manualUrl,
-                note: 'Veri Çekildi'
+        try {
+            // Give AI a list of all our canonical product names to fuzzy-match against
+            const ikasNames = fetchedProducts ? fetchedProducts.map(p => p.name || '') : [];
+            
+            const res = await fetch('/api/scan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: manualUrl.trim(), ikasProductNames: ikasNames })
             });
+
+            if(!res.ok) {
+                const err = await res.json();
+                throw new Error(err.error || 'Tarama hatası');
+            }
+
+            const json = await res.json();
+            const payload = json.data;
+
+            setPendingCandidate({
+                name: payload.scrapedTitle || 'İsimsiz Rakip',
+                price: payload.scrapedPrice || 0,
+                source: payload.source || 'Bilinmiyor',
+                sourceType: 'manual',
+                url: payload.url,
+                note: payload.bestMatch?.name ? `Yapay Zeka Eşleşmesi: ${payload.bestMatch.name} (${payload.bestMatch.confidencePct}%)` : 'Otomatik eşleşme bulunamadı',
+                suggestedProductId: payload.bestMatch?.name ? fetchedProducts?.find(p => p.name === payload.bestMatch.name)?.id : null
+            });
+            
+            // If the AI found a highly confident match, automatically focus the UI on the matching product ID
+            if(payload.bestMatch?.confidencePct > 60) {
+                 const matchedDbProd = fetchedProducts?.find(p => p.name === payload.bestMatch.name);
+                 if(matchedDbProd) setSelectedProduct(matchedDbProd);
+            }
+
             setShowNewCandidates(true);
             setManualUrl('');
-        }, 1500);
+        } catch(error) {
+            console.error("Scan failed:", error);
+            alert("Rakip taranamadı: " + error.message);
+        } finally {
+            setIsLoadingManual(false);
+        }
     };
 
     // Dynamic Competitor List (Loaded from backend JSON)
@@ -340,12 +369,13 @@ export const CompetitionAnalysis = () => {
                 const channel = order.sourceName || 'Site';
 
                 if (!orderStats[name]) {
-                    orderStats[name] = { totalSales: 0, channelSales: { 'Trendyol': 0, 'Hepsiburada': 0, 'Amazon': 0, 'Site': 0 } };
+                    orderStats[name] = { totalSales: 0, channelSales: { 'Trendyol': 0, 'Hepsiburada': 0, 'Amazon': 0, 'Site': 0 }, tyRevenue: 0 };
                 }
                 orderStats[name].totalSales += qty;
 
                 if (channel.toLowerCase().includes('trendyol')) {
                     orderStats[name].channelSales['Trendyol'] += qty;
+                    orderStats[name].tyRevenue += (item.finalPrice || item.price || 0) * qty;
                 } else if (channel.toLowerCase().includes('hepsiburada')) {
                     orderStats[name].channelSales['Hepsiburada'] += qty;
                 } else if (channel.toLowerCase().includes('amazon')) {
@@ -406,7 +436,13 @@ export const CompetitionAnalysis = () => {
             let btnColor = 'gray';
 
             if (simulatedCompPrice) {
-                if (margin > 0 && basePrice <= simulatedCompPrice) {
+                // Determine margin AT competitor's price (to check if we have discount room)
+                const netPriceAtCompWithoutKdv = simulatedCompPrice / (1 + kdvRate);
+                const commissionAtComp = simulatedCompPrice * commRate;
+                const totalVariableCostAtComp = costs.cogs + costs.shipping + commissionAtComp;
+                const profitAtCompPrice = netPriceAtCompWithoutKdv - totalVariableCostAtComp;
+
+                if (profit > 0 && basePrice <= simulatedCompPrice) {
                     // Güçlü: Hem kârlı hem rakipten uygun (veya eşit)
                     position = 'guclu';
                     positionLabel = 'Güçlü';
@@ -414,39 +450,43 @@ export const CompetitionAnalysis = () => {
                     positionBadge = 'Kârlı ve Ucuz';
                     btnAction = 'İzle';
                     btnColor = 'gray';
-                } else if (margin > 15 && basePrice > simulatedCompPrice) {
-                    // Ayarlanabilir: Kârlı ama pahalı, indirim şansı var
-                    position = 'ayarlanabilir';
-                    positionLabel = 'Ayarlanabilir';
-                    positionColor = 'blue';
-                    positionBadge = 'Fiyat Kırılabilir';
-                    btnAction = 'Fiyat Kır';
-                    btnColor = 'indigo';
-                } else if (margin > 0 && margin <= 15 && basePrice > simulatedCompPrice) {
-                    // Kilitli: Kârlı ama pahalı, marjı sınırda
-                    position = 'kilitli';
-                    positionLabel = 'Kilitli';
-                    positionColor = 'purple';
-                    positionBadge = 'Marj Sınırda';
-                    btnAction = 'Detay';
-                    btnColor = 'gray';
-                } else if (margin <= 0 && basePrice < simulatedCompPrice) {
-                    // İyileştirilebilir: Zararda ama fiyat artışıyla kurtarılabilir
-                    position = 'iyilestirilebilir';
-                    positionLabel = 'İyileştirilebilir';
-                    positionColor = 'amber';
-                    positionBadge = 'Gereksiz Ucuz';
-                    btnAction = 'Kâr Artır';
-                    btnColor = 'amber';
-                } else if (margin <= 0 && basePrice === simulatedCompPrice) {
-                    // Sıkışmış: Zararda ve maliyet yüzünden kâra geçemiyor (rakiple aynı fiyatta ama zararda)
-                    position = 'sikismis';
-                    positionLabel = 'Sıkışmış';
-                    positionColor = 'gray';
-                    positionBadge = 'Maliyet Engeli';
-                    btnAction = 'Yönet';
-                    btnColor = 'gray';
-                } else if (margin <= 0 && basePrice > simulatedCompPrice) {
+                } else if (profit > 0 && basePrice > simulatedCompPrice) {
+                    if (profitAtCompPrice > 0) {
+                        // Ayarlanabilir: Kârlı ama pahalı, indirim şansı var
+                        position = 'ayarlanabilir';
+                        positionLabel = 'Ayarlanabilir';
+                        positionColor = 'blue';
+                        positionBadge = 'Fiyat Kırılabilir';
+                        btnAction = 'Fiyat Kır';
+                        btnColor = 'indigo';
+                    } else {
+                        // Kilitli: Kârlı ama pahalı, marjı sınırda
+                        position = 'kilitli';
+                        positionLabel = 'Kilitli';
+                        positionColor = 'purple';
+                        positionBadge = 'Marj Sınırda';
+                        btnAction = 'Detay';
+                        btnColor = 'gray';
+                    }
+                } else if (profit <= 0 && basePrice < simulatedCompPrice) {
+                    if (profitAtCompPrice > 0) {
+                        // İyileştirilebilir: Zararda ama fiyat artışıyla kurtarılabilir
+                        position = 'iyilestirilebilir';
+                        positionLabel = 'İyileştirilebilir';
+                        positionColor = 'amber';
+                        positionBadge = 'Gereksiz Ucuz';
+                        btnAction = 'Kâr Artır';
+                        btnColor = 'amber';
+                    } else {
+                        // Sıkışmış: Zararda ve maliyet yüzünden kâra geçemiyor (Rakip fiyatını yakalasa bile zararda)
+                        position = 'sikismis';
+                        positionLabel = 'Sıkışmış';
+                        positionColor = 'gray';
+                        positionBadge = 'Maliyet Engeli';
+                        btnAction = 'Yönet';
+                        btnColor = 'gray';
+                    }
+                } else if (profit <= 0 && basePrice >= simulatedCompPrice) {
                     // Zayıf: Zararda ve rakipten pahalı (Çıkış yok)
                     position = 'zayif';
                     positionLabel = 'Zayıf';
@@ -474,6 +514,10 @@ export const CompetitionAnalysis = () => {
                 }
             }
 
+            const tyUnitsRaw = stats.channelSales['Trendyol'] || 0;
+            const tyRevenue = stats.tyRevenue || 0;
+            const tySalesPrice = tyUnitsRaw > 0 ? tyRevenue / tyUnitsRaw : basePrice;
+
             return {
                 id: p.id,
                 sku: p.sku || `SKU-00${i + 1}`,
@@ -488,6 +532,20 @@ export const CompetitionAnalysis = () => {
                 activeCompetitors: productCompetitors.length,
                 buyboxOwner: buyboxOwner,
                 gap: gapPct,
+                totalSales: stats.totalSales,
+                channelSales: stats.channelSales,
+                position: position,
+                positionLabel: positionLabel,
+                positionColor: positionColor,
+                status: positionBadge, // Displaying badge instead of status
+                btnAction: btnAction,
+                btnColor: btnColor,
+                trendyolMetrics: {
+                    price: tySalesPrice,
+                    sales: tyUnitsRaw,
+                    competitorName: '-',
+                    positionLabel: null
+                },
                 historyMe: Array.from({ length: 7 }).map((_, idx) => {
                     // Extract the last 7 days of real userPrice from our trend generation logic, locally scoped
                     const now = new Date();
@@ -576,9 +634,113 @@ export const CompetitionAnalysis = () => {
         };
     }, [products, competitors]);
 
+    const actionPlan = React.useMemo(() => {
+        const plan = [];
+        
+        let buyboxAttackProducts = [];
+        let marginOppProducts = [];
+        let stockClearanceProducts = [];
+
+        products.forEach(p => {
+             if (p.competitorPrice) {
+                 const priceDiffPct = Math.abs(p.myPrice - p.competitorPrice) / p.myPrice;
+                 
+                 if (!p.buyboxOwner) {
+                     if (priceDiffPct <= 0.05) {
+                         buyboxAttackProducts.push(p);
+                     } else if (priceDiffPct > 0.15) {
+                         stockClearanceProducts.push(p);
+                     }
+                 } else {
+                     if (priceDiffPct > 0.10) {
+                         // We are the winner, but we are >10% cheaper than the competitor! Bad!
+                         marginOppProducts.push(p);
+                     }
+                 }
+             }
+        });
+
+        // 1. Margin Opp
+        if (marginOppProducts.length > 0) {
+            plan.push({
+                id: 'margin_opp',
+                title: 'Kâr Optimizasyonu Fırsatı',
+                badge: 'KÂR ARTIRIMI',
+                color: 'emerald',
+                icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>,
+                desc: `${marginOppProducts.length} adet üründe rakipten gereğinden fazla ucuzuz (Buybox bizde). Rekabetçi konumunuzu kaybetmeden fiyatları yukarı yönlü test edip kârlılığınızı artırmayı değerlendirebilirsiniz.`,
+                impact: `Gizli kâr potansiyelinin açığa çıkarılması`,
+                selected: true
+            });
+        }
+
+        // 2. Buybox Attack
+        if (buyboxAttackProducts.length > 0) {
+            plan.push({
+                id: 'buybox_attack',
+                title: 'Fırsat Ürünlerinde Rekabet Atağı',
+                badge: 'BÜYÜME',
+                color: 'purple',
+                icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>,
+                desc: `Fiyat farkının birbirine çok yakın olduğu ${buyboxAttackProducts.length} üründe mikro fiyat stratejileri deneyerek pazar payınızı genişletme fırsatı bulunuyor. Kâr marjınız elveriyorsa ufak indirimler test edilebilir.`,
+                impact: `Satış hacminde ve görünürlükte olası artış`,
+                selected: true
+            });
+        }
+
+        // 3. Defense against Aggressive Name
+        if (kpiData.aggressiveName && kpiData.aggressiveName !== '-') {
+             plan.push({
+                id: 'defense',
+                title: `${kpiData.aggressiveName} İle Taktiksel Rekabet`,
+                badge: 'REKABET STRATEJİSİ',
+                color: 'indigo',
+                icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>,
+                desc: `En sık karşılaştığınız "${kpiData.aggressiveName}" mağazası fiyatlama açısından oldukça aktif görünüyor. Buybox rekabetini korumak için bu satıcıya özel taktiksel fiyat uyarlamalarını gözden geçirmeniz önerilir.`,
+                impact: `Pazar liderliğinin izlenmesi ve korunması`,
+                selected: true
+            });
+        }
+
+        // 4. Stock clearance
+         if (stockClearanceProducts.length > 0) {
+             plan.push({
+                id: 'stock_clearance',
+                title: 'Stok ve Rekabet İncelemesi',
+                badge: 'STOK YÖNETİMİ',
+                color: 'amber',
+                icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path></svg>,
+                desc: `Fiyat olarak piyasanın epey üzerinde kalan ${stockClearanceProducts.length} adet üründe durgunluk yaşanabilir. Nakit akışını canlandırmak adına bu ürün grupları için farklı pazarlama veya indirim kurguları geliştirebilirsiniz.`,
+                impact: `Bekleyen stokların nakde dönüştürülme şansı`,
+                selected: false
+            });
+         }
+
+        // 5. Psychological logic always applies
+        plan.push({
+                id: 'psy_pricing',
+                title: 'Psikolojik Fiyatlama Denemesi',
+                badge: 'DÖNÜŞÜM ODAKLI',
+                color: 'pink',
+                icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>,
+                desc: `Tam sayı (örn: 1250.00 TL) ile biten kârlı ürün fiyatlarında alışverişçinin pürüz algısını kırmak ve sepet dönüşümünü esnetmek için .90 veya .99 kullanımını (1249.90 TL vb.) test etmek isteyebilirsiniz.`,
+                impact: `Ziyaretçilerin ödeme adımına geçişinde pozitif ihtimal`,
+                selected: true
+            });
+
+        return plan;
+    }, [products, kpiData]);
+
     // Pagination State
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage, setItemsPerPage] = useState(10);
+    const [expandedRows, setExpandedRows] = useState(new Set());
+    const toggleRow = (id) => {
+        const newSet = new Set(expandedRows);
+        if (newSet.has(id)) newSet.delete(id);
+        else newSet.add(id);
+        setExpandedRows(newSet);
+    };
 
 
 
@@ -849,12 +1011,11 @@ export const CompetitionAnalysis = () => {
                     <div className="flex items-baseline gap-3 mb-2">
                         <span className="text-3xl font-bold text-slate-900">{kpiData.winRate.toFixed(0)}%</span>
                     </div>
-                    <div className="mt-auto pt-3 flex justify-between items-center bg-white">
+                    <div className="mt-auto pt-3 flex items-center bg-white border-t border-slate-100">
                         <div className="text-xs text-slate-500 flex items-center gap-1.5">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                            {kpiData.winCount} Lider / {kpiData.totalTrackedCount} Toplam
+                            {kpiData.winCount} Lider / {kpiData.totalTrackedCount} Toplam Eşleşme
                         </div>
-                        <span className="text-[11px] font-bold text-emerald-600">+2.4% Artış</span>
                     </div>
                 </div>
 
@@ -881,11 +1042,10 @@ export const CompetitionAnalysis = () => {
                             {kpiData.riskCount} Ürün
                         </span>
                     </div>
-                    <div className="mt-auto pt-3 flex justify-between items-center bg-white">
+                    <div className="mt-auto pt-3 flex items-center bg-white border-t border-slate-100">
                         <div className="text-xs text-slate-500">
-                            Sebep: <span className="font-semibold text-slate-700">Yüksek Fiyat</span>
+                            Fiyat farklılıkları kaynaklı potansiyel kayıp
                         </div>
-                        <span className="text-[11px] font-bold text-rose-600">+₺1.2K Risk</span>
                     </div>
                 </div>
 
@@ -912,13 +1072,9 @@ export const CompetitionAnalysis = () => {
                             {kpiData.intenseCount} Rakip Ürün
                         </span>
                     </div>
-                    <div className="mt-auto pt-3 flex justify-between items-center bg-white">
-                        <div className="text-xs text-slate-500">
-                            Piyasa Yönü
-                        </div>
-                        <div className="flex items-center gap-1 text-[11px] font-bold text-rose-600">
-                            <TrendingDown className="w-3 h-3" />
-                            Fiyatlar Düşüyor
+                    <div className="mt-auto pt-3 flex items-center bg-white border-t border-slate-100">
+                        <div className="text-[11px] font-medium text-slate-500">
+                            Anlık takip edilen agresif aktör sayısı
                         </div>
                     </div>
                 </div>
@@ -1105,19 +1261,19 @@ export const CompetitionAnalysis = () => {
                         <div className="flex gap-3 items-start">
                             <span className="mt-2 w-2 h-2 bg-emerald-500 rounded-full flex-shrink-0 ring-4 ring-emerald-50"></span>
                             <p className="text-sm text-gray-600 leading-relaxed">
-                                <strong className="text-gray-900 font-semibold">{kpiData.winCount} Ürün</strong> ideal fiyat aralığında ("Lider"). Bu ürünlerin takip edilen toplam ciya oranı <strong className="text-gray-900 font-semibold">%{kpiData.ciroPayi.toFixed(1)}</strong> seviyesinde.
+                                <strong className="text-gray-900 font-semibold">{kpiData.winCount} Ürün</strong> için fiyatlarınız rekabette oldukça avantajlı görünüyor ("Lider"). Bu gruptaki ürünlerinizin büyüme üzerinde destekleyici bir etkisi olması beklenebilir.
                             </p>
                         </div>
                         <div className="flex gap-3 items-start">
                             <span className="mt-2 w-2 h-2 bg-amber-500 rounded-full flex-shrink-0 ring-4 ring-amber-50"></span>
                             <p className="text-sm text-gray-600 leading-relaxed">
-                                <strong className="text-gray-900 font-semibold">{kpiData.riskCount} Ürün</strong> için rakipleriniz daha ucuz. Toplam <strong className="text-gray-900 font-semibold">₺{(kpiData.riskRevenue / 1000).toFixed(1)}K</strong> ciro potansiyeli risk altında.
+                                <strong className="text-gray-900 font-semibold">{kpiData.riskCount} Ürün</strong> için piyasadaki bazı satıcıların sizin altınızda fiyatlama yaptığını gözlemliyoruz. Rekabetçi konumunuzu gözden geçirmek faydalı olabilir.
                             </p>
                         </div>
                         <div className="flex gap-3 items-start">
                             <span className="mt-2 w-2 h-2 bg-rose-500 rounded-full flex-shrink-0 ring-4 ring-rose-50"></span>
                             <p className="text-sm text-gray-600 leading-relaxed">
-                                <strong className="text-gray-900 font-semibold">Dikkat:</strong> <strong className="text-gray-900 font-semibold">{kpiData.aggressiveName}</strong> markası size karşı <strong className="text-gray-900 font-semibold">{kpiData.aggressiveCount} üründe</strong> daha agresif bir fiyatlama stratejisi izliyor.
+                                <strong className="text-gray-900 font-semibold">Tedarikçi Yoğunluğu:</strong> Ağırlıklı olarak <strong className="text-gray-900 font-semibold">{kpiData.aggressiveName}</strong> isimli satıcı <strong className="text-gray-900 font-semibold">{kpiData.aggressiveCount} üründe</strong> karşınıza çıkıyor. Bu aktörle ortak ürün gamınızı incelemek stratejik avantaj sağlayabilir.
                             </p>
                         </div>
                     </div>
@@ -1207,7 +1363,8 @@ export const CompetitionAnalysis = () => {
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                             {currentProducts.map((product) => (
-                                <tr key={product.id} className="hover:bg-slate-50 transition-colors group" data-position={product.position}>
+                                <React.Fragment key={product.id}>
+                                <tr className="hover:bg-slate-50 transition-colors group cursor-pointer" onClick={() => toggleRow(product.id)} data-position={product.position}>
                                     <td className="px-6 py-4">
                                         <div className="flex items-center gap-4">
                                             <div className="h-12 w-12 rounded-lg border border-slate-200 overflow-hidden bg-white shrink-0">
@@ -1259,20 +1416,63 @@ export const CompetitionAnalysis = () => {
                                     <td className="px-6 py-4">
                                         <div className="relative">
                                             <div className="text-sm font-bold text-slate-900 inline-block">
-                                                {product.totalSales.toLocaleString()} Adet
+                                                {Math.max(0, product.totalSales - product.trendyolMetrics.sales).toLocaleString()} Adet
                                             </div>
                                         </div>
                                     </td>
                                     <td className="px-6 py-4 text-right">
-                                        <button
-                                            onClick={() => openManager(product)}
-                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-50 hover:text-indigo-600 hover:border-indigo-200 transition-all shadow-sm"
-                                        >
-                                            <Settings className="w-3.5 h-3.5" />
-                                            Rakipleri Yönet
-                                        </button>
+                                        <div className="flex items-center justify-end gap-3">
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); openManager(product); }}
+                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-50 hover:text-indigo-600 hover:border-indigo-200 transition-all shadow-sm"
+                                            >
+                                                <Settings className="w-3.5 h-3.5" />
+                                                Rakipleri Yönet
+                                            </button>
+                                            <button className="text-slate-400 hover:text-indigo-600 transition-colors">
+                                                {expandedRows.has(product.id) ? <ChevronUp className="w-5 h-5"/> : <ChevronDown className="w-5 h-5"/>}
+                                            </button>
+                                        </div>
                                     </td>
                                 </tr>
+                                {/* Trendyol Sub-Row Accordion */}
+                                {expandedRows.has(product.id) && (
+                                    <tr className="bg-slate-50 border-t border-slate-100/60">
+                                        <td className="px-6 py-3 relative">
+                                            <div className="absolute left-[3.25rem] top-0 bottom-1/2 border-l border-slate-300"></div>
+                                            <div className="absolute left-[3.25rem] bottom-1/2 w-4 border-b border-slate-300"></div>
+                                            <div className="flex items-center gap-3 ml-12">
+                                                <div className="w-10 h-10 rounded-md overflow-hidden bg-[#F27A1A] flex items-center justify-center shrink-0 border border-gray-100 shadow-[0_2px_8px_rgba(242,122,26,0.2)]">
+                                                    <svg width="100%" height="100%" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                        <rect width="100" height="100" fill="#F27A1A" />
+                                                        <rect y="32" width="100" height="36" fill="#111111" />
+                                                        <text x="50" y="53" fontFamily="Arial, Helvetica, sans-serif" fontWeight="800" fontSize="21" fill="#FFFFFF" textAnchor="middle" dominantBaseline="middle" letterSpacing="-1">trendyol</text>
+                                                    </svg>
+                                                </div>
+                                                <span className="font-bold text-gray-800 tracking-wide text-[11px]">Trendyol</span>
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-3">
+                                            <div className="text-[13px] font-bold text-slate-700">₺{product.trendyolMetrics.price.toFixed(2)}</div>
+                                            <div className="text-[10px] text-slate-500">Satış Fiyatınız</div>
+                                        </td>
+                                        <td className="px-6 py-3">
+                                            <div className="text-[13px] font-medium text-slate-500">-</div>
+                                        </td>
+                                        <td className="px-6 py-3">
+                                            <span className="text-[11px] text-slate-400 italic font-medium">Veri Bekleniyor</span>
+                                        </td>
+                                        <td className="px-6 py-3">
+                                            <div className="text-[13px] font-bold text-slate-700 inline-block">
+                                                {product.trendyolMetrics.sales.toLocaleString()} Adet
+                                            </div>
+                                            <div className="text-[10px] text-slate-500">Satış (30 Gün)</div>
+                                        </td>
+                                        <td className="px-6 py-3 text-right">
+                                        </td>
+                                    </tr>
+                                )}
+                                </React.Fragment>
                             ))}
                         </tbody>
                     </table>
@@ -1583,121 +1783,37 @@ export const CompetitionAnalysis = () => {
 
                             <div className="px-6 py-6 max-h-[65vh] overflow-y-auto bg-gray-50/50 space-y-4">
 
-                                <div className="bg-white border border-gray-200 rounded-xl p-5 hover:border-emerald-300 hover:shadow-md transition-all relative group cursor-pointer">
-                                    <div className="absolute top-5 right-5">
-                                        <input type="checkbox" defaultChecked className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 cursor-pointer" />
-                                    </div>
-                                    <div className="flex gap-4">
-                                        <div className="mt-1 w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center text-emerald-600 flex-shrink-0">
-                                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                {actionPlan.length > 0 ? actionPlan.map(action => (
+                                    <div key={action.id} className={`bg-white border rounded-xl p-5 hover:shadow-md transition-all relative group cursor-pointer border-gray-200 hover:border-${action.color}-300`}>
+                                        <div className="absolute top-5 right-5">
+                                            <input type="checkbox" defaultChecked={action.selected} className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 cursor-pointer" />
                                         </div>
-                                        <div>
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <h4 className="text-base font-bold text-gray-900">Agresif Ürünlerde Kâr Artışı</h4>
-                                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100 uppercase">Kârlılık</span>
+                                        <div className="flex gap-4">
+                                            <div className={`mt-1 w-10 h-10 bg-${action.color}-100 rounded-lg flex items-center justify-center text-${action.color}-600 flex-shrink-0`}>
+                                                {action.icon}
                                             </div>
-                                            <p className="text-sm text-gray-500 leading-relaxed max-w-lg">Piyasa ortalamasının %10 altında kalan {kpiData.winCount > 0 ? kpiData.winCount : 5} üründe fiyatlar optimize edilecek. Satış hacmi korunarak marj artırılacak.</p>
-                                            <div className="mt-3 flex items-center gap-2">
-                                                <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded-md border border-emerald-100 flex items-center gap-1">
-                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>
-                                                    Tahmini Kazanç: +₺{((kpiData.ciroPayi * 123) || 1250).toFixed(0)}/ay
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="bg-white border border-gray-200 rounded-xl p-5 hover:border-indigo-300 hover:shadow-md transition-all relative group cursor-pointer">
-                                    <div className="absolute top-5 right-5">
-                                        <input type="checkbox" defaultChecked className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 cursor-pointer" />
-                                    </div>
-                                    <div className="flex gap-4">
-                                        <div className="mt-1 w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center text-indigo-600 flex-shrink-0">
-                                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
-                                        </div>
-                                        <div>
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <h4 className="text-base font-bold text-gray-900">{kpiData.aggressiveName || 'Büyük Rakip'} Savunma Kalkanı</h4>
-                                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100 uppercase">Rekabet</span>
-                                            </div>
-                                            <p className="text-sm text-gray-500 leading-relaxed max-w-lg">Agresif fiyatlama yapan rakibe karşı "Akıllı Eşleşme" kuralı devreye alınacak. Buybox kaybı engellenecek.</p>
-                                            <div className="mt-3">
-                                                <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-1 rounded-md border border-indigo-100">
-                                                    Hedef: %95 Buybox Oranı
-                                                </span>
+                                            <div>
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <h4 className="text-base font-bold text-gray-900 pr-5">{action.title}</h4>
+                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold bg-${action.color}-50 text-${action.color}-700 border border-${action.color}-100 uppercase`}>
+                                                        {action.badge}
+                                                    </span>
+                                                </div>
+                                                <p className="text-sm text-gray-500 leading-relaxed max-w-lg">{action.desc}</p>
+                                                <div className="mt-3 flex items-center gap-2">
+                                                    <span className={`text-xs font-bold text-${action.color}-700 bg-${action.color}-50 px-2 py-1 rounded-md border border-${action.color}-100 flex items-center gap-1`}>
+                                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>
+                                                        {action.impact}
+                                                    </span>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
-                                </div>
-
-                                <div className="bg-white border border-gray-200 rounded-xl p-5 hover:border-amber-300 hover:shadow-md transition-all relative group cursor-pointer">
-                                    <div className="absolute top-5 right-5">
-                                        <input type="checkbox" className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 cursor-pointer" />
+                                )) : (
+                                    <div className="p-8 text-center text-gray-500">
+                                        Durumunuz mükemmel! Şu an için yapay zekanın önereceği ilave bir müdahale hamlesi bulunmuyor.
                                     </div>
-                                    <div className="flex gap-4">
-                                        <div className="mt-1 w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center text-amber-600 flex-shrink-0">
-                                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path></svg>
-                                        </div>
-                                        <div>
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <h4 className="text-base font-bold text-gray-900">Kopuk Ürünlerde Stok Eritme</h4>
-                                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-100 uppercase">Stok Sağlığı</span>
-                                            </div>
-                                            <p className="text-sm text-gray-500 leading-relaxed max-w-lg">Piyasadan %20+ pahalı olan ve son 30 gündür satmayan 2 "Kopuk" üründe %15 indirim yapılarak nakit akışı sağlanacak.</p>
-                                            <div className="mt-3">
-                                                <span class="text-xs font-bold text-amber-700 bg-amber-50 px-2 py-1 rounded-md border border-amber-100">
-                                                    Beklenen Nakit: ₺4.500
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="bg-white border border-gray-200 rounded-xl p-5 hover:border-purple-300 hover:shadow-md transition-all relative group cursor-pointer">
-                                    <div className="absolute top-5 right-5">
-                                        <input type="checkbox" defaultChecked className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 cursor-pointer" />
-                                    </div>
-                                    <div className="flex gap-4">
-                                        <div className="mt-1 w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center text-purple-600 flex-shrink-0">
-                                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                                        </div>
-                                        <div>
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <h4 className="text-base font-bold text-gray-900">Fırsat Ürünlerinde Buybox Atağı</h4>
-                                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-100 uppercase">Büyüme</span>
-                                            </div>
-                                            <p className="text-sm text-gray-500 leading-relaxed max-w-lg">Fiyat farkının çok az olduğu {kpiData.riskCount > 0 ? Math.ceil(kpiData.riskCount * 0.2) : 3} üründe ufak indirimler yapılarak liderlik ele geçirilecek.</p>
-                                            <div className="mt-3">
-                                                <span className="text-xs font-bold text-purple-700 bg-purple-50 px-2 py-1 rounded-md border border-purple-100">
-                                                    Potansiyel Risk Kurtarma: ₺{((kpiData.riskRevenue * 0.15) || 5400).toLocaleString('tr-TR', { maximumFractionDigits: 0 })}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="bg-white border border-gray-200 rounded-xl p-5 hover:border-pink-300 hover:shadow-md transition-all relative group cursor-pointer">
-                                    <div className="absolute top-5 right-5">
-                                        <input type="checkbox" defaultChecked className="w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 cursor-pointer" />
-                                    </div>
-                                    <div className="flex gap-4">
-                                        <div className="mt-1 w-10 h-10 bg-pink-100 rounded-lg flex items-center justify-center text-pink-600 flex-shrink-0">
-                                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                        </div>
-                                        <div>
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <h4 className="text-base font-bold text-gray-900">Psikolojik Fiyatlama Optimizasyonu</h4>
-                                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-pink-50 text-pink-700 border border-pink-100 uppercase">Dönüşüm</span>
-                                            </div>
-                                            <p className="text-sm text-gray-500 leading-relaxed max-w-lg">Tam sayı (1250.00) ile biten fiyatlar, dönüşümü artırmak için .90 veya .99 (1249.90) formatına çekilecek.</p>
-                                            <div className="mt-3">
-                                                <span className="text-xs font-bold text-pink-700 bg-pink-50 px-2 py-1 rounded-md border border-pink-100">
-                                                    Beklenen Dönüşüm Etkisi: +%0.5
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
+                                )}
 
                             </div>
 
@@ -2053,59 +2169,57 @@ export const CompetitionAnalysis = () => {
                                                 }
 
                                                 try {
-                                                    // Parse all URLs from textarea
                                                     const targetUrlsArray = bulkCompetitorInput.split('\n').map(u => u.trim()).filter(Boolean);
-
-                                                    const response = await fetch('/api/scrape-and-match', {
-                                                        method: 'POST',
-                                                        headers: {
-                                                            'Content-Type': 'application/json'
-                                                        },
-                                                        body: JSON.stringify({
-                                                            targetUrls: targetUrlsArray,
-                                                            myProducts: products, // Pass current Ikas products catalog
-                                                            channel: bulkSelectedChannel
-                                                        })
-                                                    });
-
-                                                    if (!response.ok) {
-                                                        throw new Error('API Response Error');
+                                                    if(targetUrlsArray.length === 0) {
+                                                        throw new Error('Lütfen en az 1 adet rakip linki giriniz.');
                                                     }
 
-                                                    const data = await response.json();
+                                                    // Use our shiny new API endpoint for each valid URL
+                                                    const results = await Promise.all(targetUrlsArray.map(async (url) => {
+                                                        const ikasNames = products.map(p => p.name || '');
+                                                        const res = await fetch('/api/scan', {
+                                                            method: 'POST',
+                                                            headers: { 'Content-Type': 'application/json' },
+                                                            body: JSON.stringify({ url, ikasProductNames: ikasNames })
+                                                        });
+                                                        if(res.ok) {
+                                                            const json = await res.json();
+                                                            return json.data;
+                                                        }
+                                                        return null;
+                                                    }));
 
-                                                    if (data.success && data.matches && data.matches.length > 0) {
+                                                    const validResults = results.flat().filter(Boolean);
+                                                    
+                                                    if (validResults.length > 0) {
+                                                        // Structure the scraped data into the Bulk Match UI format
+                                                        const matchedResultsForUI = validResults.map((r, index) => {
+                                                             let matchedIkasProduct = products.find(p => p.name === r.bestMatch?.name);
+                                                             return {
+                                                                 id: matchedIkasProduct ? matchedIkasProduct.id : `temp_${index}`,
+                                                                 myImage: matchedIkasProduct ? matchedIkasProduct.image : '',
+                                                                 myName: matchedIkasProduct ? matchedIkasProduct.name : 'Eşleşen Ürün Bulunamadı',
+                                                                 mySku: matchedIkasProduct ? matchedIkasProduct.sku : '-',
+                                                                 myPrice: matchedIkasProduct ? matchedIkasProduct.myPrice : 0,
+                                                                 compName: r.scrapedTitle || 'İsimsiz Ürün',
+                                                                 compPrice: r.scrapedPrice || 0,
+                                                                 compSeller: r.source || bulkSelectedChannel,
+                                                                 matchConfidence: r.bestMatch?.confidencePct || 0,
+                                                                 compImage: r.scrapedImage || '',
+                                                                 compUrl: r.url,
+                                                                 selected: r.bestMatch?.confidencePct > 50 // auto-select high confidence ones
+                                                             };
+                                                        });
                                                         setBulkScanError('');
-                                                        setBulkMatchResults(data.matches);
+                                                        setBulkMatchResults(matchedResultsForUI);
                                                         setBulkMatchStep(3);
                                                     } else {
-                                                        setBulkScanError("Algılanan ürünler ile IKAS kataloğunuz arasında eşleşen ürün bulunamadı. (Site otomatik tarayıcıları engelliyor olabilir veya kataloglar farklı).");
+                                                        setBulkScanError("Tarama başarısız oldu veya site bot korumasına takıldı.");
                                                         setBulkMatchStep(1);
                                                     }
                                                 } catch (error) {
-                                                    console.warn("Vercel Demo Mock Triggered for Scraping:", error);
-
-                                                    // Generate Demo Matches out of real inventory logic to show UI offline
-                                                    const demoMatches = products.slice(0, 5).map(p => ({
-                                                        id: p.id,
-                                                        myImage: p.img,
-                                                        myName: p.name,
-                                                        mySku: p.sku,
-                                                        myPrice: p.price,
-                                                        compName: p.name + " (" + bulkSelectedChannel + " Rakibi)",
-                                                        compPrice: Math.floor(p.price * (0.85 + Math.random() * 0.3)),
-                                                        compSeller: bulkSelectedChannel + " Satıcısı",
-                                                        matchConfidence: 98,
-                                                        compImage: p.img,
-                                                        compUrl: "https://www.demo-rakip.com",
-                                                        selected: true
-                                                    }));
-
-                                                    setTimeout(() => {
-                                                        setBulkScanError('');
-                                                        setBulkMatchResults(demoMatches);
-                                                        setBulkMatchStep(3);
-                                                    }, 3000); // 3 seconds realistic wait simulation
+                                                    setBulkScanError("Bağlantı Hatası: " + error.message);
+                                                    setBulkMatchStep(1);
                                                 }
                                             }}
                                             className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-sm transition-colors flex items-center gap-2"
@@ -2161,7 +2275,11 @@ export const CompetitionAnalysis = () => {
                                                     {/* Your Product */}
                                                     <div className="flex-1 min-w-0 p-5 border-b md:border-b-0 md:border-r border-gray-100 flex items-start gap-4 flex-col sm:flex-row">
                                                         <div className="w-16 h-16 rounded-lg bg-gray-100 shrink-0 shadow-sm overflow-hidden flex items-center justify-center border border-gray-200/50">
-                                                            <img src={match.myImage} alt="product" className="w-full h-full object-cover" onError={(e) => { e.target.src = getFallbackProductImage(match.myName); }} />
+                                                            {match.myName === 'Eşleşen Ürün Bulunamadı' ? (
+                                                                <svg className="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                                                            ) : (
+                                                                <img src={match.myImage} alt="product" className="w-full h-full object-cover" onError={(e) => { e.target.src = getFallbackProductImage(match.myName); }} />
+                                                            )}
                                                         </div>
                                                         <div className="flex-1 min-w-0 flex flex-col justify-center h-full pt-0.5">
                                                             <div className="font-bold text-[13px] text-slate-800 leading-snug line-clamp-2 mb-2" title={match.myName}>{match.myName}</div>
