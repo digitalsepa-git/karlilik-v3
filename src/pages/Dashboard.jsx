@@ -752,14 +752,6 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
 
     return (
         <div className="space-y-6">
-            <div className="mb-6 p-4 rounded-xl bg-amber-100 border-2 border-amber-400 text-amber-900 font-mono text-sm shadow-sm relative z-[9999]">
-                <strong>[Diagnostic HUD] ({new Date().toLocaleTimeString()})</strong><br/>
-                Orders Array (Sourced from Ikas/Ty): {orders?.length || 0} <br/>
-                Filtered Orders Array (UI Matches): {filteredOrders?.length || 0} <br/>
-                Fetch Loading State: {ordersData?.loading ? 'true' : 'false'} <br/>
-                Fetch Error Object: {ordersData?.error ? String(ordersData.error) : 'null'} <br/>
-                Dashboard Date Limits: {dateStart ? dateStart.toISOString() : 'none'} to {dateEnd ? dateEnd.toISOString() : 'none'}
-            </div>
             <div className="flex items-center justify-between">
                 <h1 className="text-2xl font-bold text-slate-900">{t.title}</h1>
 
