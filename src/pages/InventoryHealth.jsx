@@ -59,7 +59,7 @@ export const InventoryHealth = () => {
                         orderStats[prodName].lastSold = tx.dateRaw;
                     }
                     if (tx.dateRaw >= oneYearAgo) {
-                        orderStats[prodName].annualCOGS += (tx.cost || (tx.revenue * 0.4) || 0);
+                        orderStats[prodName].annualCOGS += (tx.cost || (tx.revenue * 0.25) || 0);
                     }
                     orderStats[prodName].allTimeRevenue += (tx.revenue || 0);
                     totalAllTimeRevenue += (tx.revenue || 0);
@@ -79,7 +79,7 @@ export const InventoryHealth = () => {
         products.forEach(p => {
             const stockQty = p.stock || 0;
             const price = p.price || 0;
-            const cost = price * 0.4; // Simulated 40% cost margin based on useOrders logic
+            const cost = price * 0.25; // Simulated 25% cost margin based on useOrders logic
 
             const productCostValue = stockQty * cost;
             const productSalesValue = stockQty * price;

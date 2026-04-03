@@ -257,7 +257,7 @@ export function useOrders(products = []) {
                                 const discount = Math.max(0, grossRevenue - revenue);
                                 const sku = variantObj.sku || `SKU-${variantObj.name ? variantObj.name.substring(0, 6) : 'DEFAULT'}`;
                                 const costInfo = productCosts[sku] || productCosts["DEFAULT"];
-                                const cogs = costInfo.cogs;
+                                const cogs = Math.round(revenue * 0.25); // Universal 25% rule
                                 const shippingCost = costInfo.shipping;
 
                                 const commission = Math.round(revenue * 0.025);
@@ -383,7 +383,7 @@ export function useOrders(products = []) {
                                 ? order.lines[0].commissionAmount
                                 : (revenue * 0.15); // Fallback
 
-                            const cogs = costInfo.cogs * Math.max(1, totalQuantity);
+                            const cogs = Math.round(revenue * 0.25); // Universal 25% rule
                             const shippingCost = costInfo.shipping * Math.max(1, totalQuantity);
 
                             const reqTyKDVRate = 0.20;

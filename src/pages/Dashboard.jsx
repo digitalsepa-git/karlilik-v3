@@ -249,41 +249,122 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
         return Math.max(1, Math.ceil((dateEnd - dateStart) / (1000 * 60 * 60 * 24)));
     }, [dateStart, dateEnd]);
 
-    const proratedFixedCost = useMemo(() => {
-        // Frekans dinamigine gore gunluk periyotlara bolunen dogru sabit giderin hesaplanmasi (Vergi ve Krediler haric)
-        const dailyFixed = expensesData
-            .filter(e => e.valueType === 'amount' && e.category !== 'tax' && e.category !== 'finance')
-            .reduce((sum, e) => sum + calculateDailyExpense(e), 0);
-        return dailyFixed * diffDays;
-    }, [diffDays]);
+    // -- PREVIOUS PERIOD BOUNDS --
+    const { prevStart, prevEnd } = useMemo(() => {
+        const pEnd = new Date(dateStart);
+        pEnd.setDate(pEnd.getDate() - 1);
+        pEnd.setHours(23, 59, 59, 999);
+        const pStart = new Date(pEnd);
+        pStart.setDate(pStart.getDate() - diffDays + 1);
+        pStart.setHours(0, 0, 0, 0);
+        return { prevStart: pStart, prevEnd: pEnd };
+    }, [dateStart, diffDays]);
 
-    const proratedTaxAndFinance = useMemo(() => {
-        const dailyFinanceAndTax = expensesData
-            .filter(e => e.valueType === 'amount' && (e.category === 'tax' || e.category === 'finance'))
-            .reduce((sum, e) => sum + calculateDailyExpense(e), 0);
-        return dailyFinanceAndTax * diffDays;
-    }, [diffDays]);
+    const prevStartDateStr = prevStart ? prevStart.toISOString().split('T')[0] : null;
+    const prevEndDateStr = prevEnd ? prevEnd.toISOString().split('T')[0] : null;
+
+    // Fetch historical ad spend
+    const { data: prevGaData } = useGoogleAnalytics(prevStartDateStr, prevEndDateStr);
+
+    // 1. DYNAMIC GLOBAL REVENUES (UNFILTERED BY CHANNEL/CATEGORY) FOR RATIOS
+    const globalRevs = useMemo(() => {
+        let iRev = 0, tRev = 0, pIRev = 0, pTRev = 0;
+        orders.forEach(tx => {
+            const isReturn = tx.statusObj?.label === 'İade' || tx.statusObj?.label === 'İptal' || tx.statusObj?.label === 'CANCELLED' || tx.statusObj?.label === 'REFUNDED';
+            if (isReturn) return;
+            
+            const rawRev = tx.revenue || 0;
+            const isWeb = (tx.channel || '').toLowerCase().includes('web') || (tx.channel || '').toLowerCase().includes('ikas');
+            
+            if (tx.dateRaw >= dateStart && tx.dateRaw <= dateEnd) {
+                tRev += rawRev;
+                if (isWeb) iRev += rawRev;
+            } else if (tx.dateRaw >= prevStart && tx.dateRaw <= prevEnd) {
+                pTRev += rawRev;
+                if (isWeb) pIRev += rawRev;
+            }
+        });
+        return { 
+            currIkas: Math.max(1, iRev), currTotal: Math.max(1, tRev),
+            prevIkas: Math.max(1, pIRev), prevTotal: Math.max(1, pTRev)
+        };
+    }, [orders, dateStart, dateEnd, prevStart, prevEnd]);
+
+    // 2. ISOLATE OVERHEAD COSTS
+    const { proratedSharedFixed, proratedIkasOnlyFixed, proratedTaxAndFinance } = useMemo(() => {
+        let sumShared = 0, sumIkasOnly = 0, sumFinance = 0;
+        // Frekans dinamigine gore gunluk periyotlara bolunur
+        expensesData.filter(e => e.valueType === 'amount').forEach(e => {
+            const daily = calculateDailyExpense(e);
+            if (e.category === 'tax' || e.category === 'finance') {
+                sumFinance += daily;
+            } else {
+                const isIkasInfra = e.id === 'aws-cloud' || e.id === 'ikas-platform' || (e.name || '').toLowerCase().includes('aws') || (e.name || '').toLowerCase().includes('altyapı');
+                if (isIkasInfra) sumIkasOnly += daily;
+                else sumShared += daily;
+            }
+        });
+        return {
+            proratedSharedFixed: sumShared * diffDays,
+            proratedIkasOnlyFixed: sumIkasOnly * diffDays,
+            proratedTaxAndFinance: sumFinance * diffDays
+        };
+    }, [expensesData, diffDays]);
+
+    // 3. GENERATE CURRENT MATRICES
+    const currentRatios = useMemo(() => {
+        return {
+            sharedFixedRatio: proratedSharedFixed / globalRevs.currTotal,
+            ikasFixedRatio: proratedIkasOnlyFixed / globalRevs.currIkas,
+            adRatio: (gaData?.totalAdCost || 0) / globalRevs.currIkas,
+            financeRatio: proratedTaxAndFinance / globalRevs.currTotal
+        };
+    }, [proratedSharedFixed, proratedIkasOnlyFixed, proratedTaxAndFinance, globalRevs, gaData]);
+
+    const prevRatios = useMemo(() => {
+        return {
+            // NOTE: Using current expenses as proxy for previous fixed cost mass, mapped over previous revenue base
+            sharedFixedRatio: proratedSharedFixed / globalRevs.prevTotal,
+            ikasFixedRatio: proratedIkasOnlyFixed / globalRevs.prevIkas,
+            adRatio: (prevGaData?.totalAdCost || 0) / globalRevs.prevIkas,
+            financeRatio: proratedTaxAndFinance / globalRevs.prevTotal
+        };
+    }, [proratedSharedFixed, proratedIkasOnlyFixed, proratedTaxAndFinance, globalRevs, prevGaData]);
 
     // KPI totals from filtered real orders
     const totals = useMemo(() => {
         const aggr = filteredOrders.reduce((acc, order) => {
-            acc.revenue += order.revenue || 0;
-            acc.grossRevenue += order.grossRevenue || order.revenue || 0;
-            acc.discount += order.discount || 0;
-            acc.cogs += order.cogs || 0;
-            acc.shipping += order.shipping || 0;
-            acc.commission += order.commission || 0;
-            acc.tax += order.tax || 0;
+            const isReturn = order.statusObj?.label === 'İade' || order.statusObj?.label === 'İptal' || order.statusObj?.label === 'CANCELLED' || order.statusObj?.label === 'REFUNDED';
+            const rawRev = order.revenue || 0;
+            
+            acc.grossRevenue += order.grossRevenue || rawRev;
+            
+            if (isReturn) {
+                acc.returns = (acc.returns || 0) + rawRev;
+                // Sadece kargo gideri (shipping) sirkete eksi yazar. Urun depoya doner (cogs=0), komisyon iptal olur.
+                acc.shipping += order.shipping || 0;
+            } else {
+                acc.revenue += rawRev;
+                acc.discount += order.discount || 0;
+                acc.cogs += order.cogs || 0;
+                acc.shipping += order.shipping || 0;
+                acc.commission += order.commission || 0;
+                acc.tax += order.tax || 0;
+                
+                const isWeb = (order.channel || '').toLowerCase().includes('web') || (order.channel || '').toLowerCase().includes('ikas');
+                
+                // KALİBRASYON: İzole Edilmiş Proportional Giderler. 
+                // Bu sayede filtre Trendyol ise reklam sıfır kalır, Ikas ise ciro kadar asimetrik etkilenir.
+                acc.adSpend += isWeb ? (rawRev * currentRatios.adRatio) : 0;
+                acc.fixedCost += (rawRev * currentRatios.sharedFixedRatio) + (isWeb ? (rawRev * currentRatios.ikasFixedRatio) : 0);
+                acc.taxAndAmort += (rawRev * currentRatios.financeRatio);
+            }
             acc.quantity += order.quantity || 1;
             return acc;
-        }, { revenue: 0, grossRevenue: 0, discount: 0, cogs: 0, shipping: 0, commission: 0, tax: 0, quantity: 0 });
-
-        aggr.adSpend = gaData?.totalAdCost || 0;
-        aggr.fixedCost = proratedFixedCost;
-        aggr.taxAndAmort = proratedTaxAndFinance;
+        }, { revenue: 0, grossRevenue: 0, returns: 0, discount: 0, cogs: 0, shipping: 0, commission: 0, tax: 0, quantity: 0, adSpend: 0, fixedCost: 0, taxAndAmort: 0 });
 
         return aggr;
-    }, [filteredOrders, gaData, proratedFixedCost, proratedTaxAndFinance]);
+    }, [filteredOrders, currentRatios]);
 
     // Derived KPIs
     const totalCosts = totals.cogs + totals.adSpend + totals.shipping + totals.commission + totals.tax + totals.fixedCost + totals.taxAndAmort;
@@ -304,22 +385,7 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
     const ebitdaMarginPct = totals.revenue > 0 ? (ebitda / totals.revenue) * 100 : 0;
     const netMarginPct = totals.revenue > 0 ? (netProfit / totals.revenue) * 100 : 0;
 
-    // -- PREVIOUS PERIOD COMPARISON --
-    const { prevStart, prevEnd } = useMemo(() => {
-        const pEnd = new Date(dateStart);
-        pEnd.setDate(pEnd.getDate() - 1);
-        pEnd.setHours(23, 59, 59, 999);
-        const pStart = new Date(pEnd);
-        pStart.setDate(pStart.getDate() - diffDays + 1);
-        pStart.setHours(0, 0, 0, 0);
-        return { prevStart: pStart, prevEnd: pEnd };
-    }, [dateStart, diffDays]);
-
-    const prevStartDateStr = prevStart ? prevStart.toISOString().split('T')[0] : null;
-    const prevEndDateStr = prevEnd ? prevEnd.toISOString().split('T')[0] : null;
-
-    // Fetch 100% EXACT historical ad spend from Google API instead of estimating
-    const { data: prevGaData } = useGoogleAnalytics(prevStartDateStr, prevEndDateStr);
+    // -- PREVIOUS PERIOD FILTERING --
 
     const prevFilteredOrders = useMemo(() => {
         return orders.filter(tx => {
@@ -334,23 +400,34 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
 
     const prevTotals = useMemo(() => {
         const aggr = prevFilteredOrders.reduce((acc, order) => {
-            acc.revenue += order.revenue || 0;
-            acc.grossRevenue += order.grossRevenue || order.revenue || 0;
-            acc.discount += order.discount || 0;
-            acc.cogs += order.cogs || 0;
-            acc.shipping += order.shipping || 0;
-            acc.commission += order.commission || 0;
-            acc.tax += order.tax || 0;
+            const isReturn = order.statusObj?.label === 'İade' || order.statusObj?.label === 'İptal' || order.statusObj?.label === 'CANCELLED' || order.statusObj?.label === 'REFUNDED';
+            const rawRev = order.revenue || 0;
+            
+            acc.grossRevenue += order.grossRevenue || rawRev;
+            
+            if (isReturn) {
+                acc.returns = (acc.returns || 0) + rawRev;
+                acc.shipping += order.shipping || 0;
+            } else {
+                acc.revenue += rawRev;
+                acc.discount += order.discount || 0;
+                acc.cogs += order.cogs || 0;
+                acc.shipping += order.shipping || 0;
+                acc.commission += order.commission || 0;
+                acc.tax += order.tax || 0;
+                
+                const isWeb = (order.channel || '').toLowerCase().includes('web') || (order.channel || '').toLowerCase().includes('ikas');
+                
+                acc.adSpend += isWeb ? (rawRev * prevRatios.adRatio) : 0;
+                acc.fixedCost += (rawRev * prevRatios.sharedFixedRatio) + (isWeb ? (rawRev * prevRatios.ikasFixedRatio) : 0);
+                acc.taxAndAmort += (rawRev * prevRatios.financeRatio);
+            }
             acc.quantity += order.quantity || 1;
             return acc;
-        }, { revenue: 0, grossRevenue: 0, discount: 0, cogs: 0, shipping: 0, commission: 0, tax: 0, quantity: 0 });
+        }, { revenue: 0, grossRevenue: 0, returns: 0, discount: 0, cogs: 0, shipping: 0, commission: 0, tax: 0, quantity: 0, adSpend: 0, fixedCost: 0, taxAndAmort: 0 });
 
-        // Exact previous ad spend from API
-        aggr.adSpend = prevGaData?.totalAdCost || 0;
-        aggr.fixedCost = proratedFixedCost;
-        aggr.taxAndAmort = proratedTaxAndFinance;
         return aggr;
-    }, [prevFilteredOrders, prevGaData, proratedFixedCost, proratedTaxAndFinance]);
+    }, [prevFilteredOrders, prevRatios]);
 
     const prevTotalCosts = prevTotals.cogs + prevTotals.adSpend + prevTotals.shipping + prevTotals.commission + prevTotals.tax + prevTotals.fixedCost + prevTotals.taxAndAmort;
     const prevNetProfit = prevTotals.revenue - prevTotalCosts;
@@ -460,15 +537,17 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
         return filteredOrders.map(order => {
             const chLower = (order.channel || '').toLowerCase();
             const catLower = (order.category || '').toLowerCase();
+            const isReturn = order.statusObj?.label === 'İade' || order.statusObj?.label === 'İptal' || order.statusObj?.label === 'CANCELLED' || order.statusObj?.label === 'REFUNDED';
 
-            // Direct costs strictly parsed from useOrders.js source of truth
-            const commissionCost = order.commission || 0;
-            const shippingCost = order.shipping || 0;
-            const cogs = order.cogs || 0;
-            const tax = order.tax || 0;
+            // Direct costs neutralized for returns, except shipping
+            const commissionCost = isReturn ? 0 : (order.commission || 0);
+            const shippingCost = order.shipping || 0; // retained as loss
+            const cogs = isReturn ? 0 : (order.cogs || 0);
+            const tax = isReturn ? 0 : (order.tax || 0);
             const directCost = cogs + shippingCost + commissionCost + tax;
 
-            const orderRevenue = order.revenue || 0;
+            // Retained revenue is 0 for returns
+            const orderRevenue = isReturn ? 0 : (order.revenue || 0);
             const isWeb = chLower.includes('web') || chLower.includes('ikas');
             const adSpendBurden = isWeb ? (orderRevenue * webAdSpendRate) : 0;
             const globalFixedBurden = orderRevenue * globalFixedRate;
@@ -529,23 +608,26 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
         filteredOrders.forEach(order => {
             const dateStr = order.dateRaw.toISOString().split('T')[0];
             if (dayMap[dateStr]) {
-                const revenue = order.revenue || 0;
-                const cogs = order.cogs || 0;
-                const shipping = order.shipping || 0;
-                const commission = order.commission || 0;
-                const tax = order.tax || 0;
+                const isReturn = order.statusObj?.label === 'İade' || order.statusObj?.label === 'İptal' || order.statusObj?.label === 'CANCELLED' || order.statusObj?.label === 'REFUNDED';
+                
+                const revenue = isReturn ? 0 : (order.revenue || 0);
+                const cogs = isReturn ? 0 : (order.cogs || 0);
+                const shipping = order.shipping || 0; // always kept
+                const commission = isReturn ? 0 : (order.commission || 0);
+                const tax = isReturn ? 0 : (order.tax || 0);
 
                 dayMap[dateStr].sales += revenue;
                 dayMap[dateStr].brutKar += (revenue - cogs);
                 // Faaliyet İçi Katkı Payı (Net Durumu azaltacak / Kara dönüştürecek tutar)
+                // Note: Even if return (revenue=0, cogs=0), shipping is kept, so contribution becomes -shipping (a daily loss).
                 dayMap[dateStr].contribution += (revenue - cogs - shipping - commission - tax);
             }
         });
 
         const sortedDays = Object.values(dayMap).sort((a,b) => new Date(a.date) - new Date(b.date));
         
-        // Kümülatif başlangıç noktamız (Dönemin toplam genel/sabit gider deliği)
-        const totalFixedHole = (proratedFixedCost || 0) + (proratedTaxAndFinance || 0) + (gaData?.totalAdCost || 0);
+        // Kümülatif başlangıç noktamız (Dönemin toplam genel/sabit gider deliğinin filtrelenmiş oransal hacmi)
+        const totalFixedHole = (totals.fixedCost || 0) + (totals.taxAndAmort || 0) + (totals.adSpend || 0);
 
         let cumulativeSales = 0;
         let cumulativeBrutKar = 0;
@@ -576,7 +658,7 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
                 isBreakEven
             };
         });
-    }, [filteredOrders, proratedFixedCost, proratedTaxAndFinance, gaData, dateStart, dateEnd]);
+    }, [filteredOrders, totals, dateStart, dateEnd]);
 
     // Find dynamic break-even date for ReferenceLine
     const breakEvenDate = useMemo(() => {

@@ -27,7 +27,7 @@ export function useGoogleAnalytics(startDate, endDate) {
                 }
 
                 if (!res.ok) {
-                    throw new Error((json && (json.error || json.details)) || 'API yanıt vermedi');
+                    throw new Error((json && (json.details || json.error)) || 'API yanıt vermedi');
                 }
 
                 if (isMounted) {

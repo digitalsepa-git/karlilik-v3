@@ -160,6 +160,9 @@ export function useIkasProducts() {
                         }
 
                         const sku = variant.sku || `SKU-${product.id.substring(0, 6)}`;
+                        const allSkus = (product.variants || []).map(v => v.sku).filter(Boolean);
+                        if (allSkus.length === 0) allSkus.push(sku);
+
                         const brand = product.brand?.name || 'Geske';
                         const categoryName = getRootCategoryName(product.categoryIds);
 
@@ -198,7 +201,8 @@ export function useIkasProducts() {
                             img: img,
                             margin: 0,
                             history: [],
-                            channels: channels
+                            channels: channels,
+                            allSkus: allSkus
                         };
                     };
 

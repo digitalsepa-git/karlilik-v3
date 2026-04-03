@@ -7,7 +7,7 @@ export const translations = {
             inventory: "Stok Sağlığı",
             competitors: "Rekabet Analizi",
             simulator: "Fiyat Simülatörü",
-            reports: "Finansal Raporlar",
+            reports: "Rapor Merkezi",
             expenses: "Giderler & Maliyetler",
             settings: "Ayarlar & Entegrasyonlar"
         },

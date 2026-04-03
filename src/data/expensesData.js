@@ -5,6 +5,7 @@ export const expensesData = [
     { id: 3, name: 'Yazılım Abonelikleri (SaaS)', amount: 4200, frequency: 'Aylık', category: 'opex', valueType: 'amount', allocationScope: { type: 'global' } },
     { id: 4, name: 'İnternet & Faturalar', amount: 2400, frequency: 'Aylık', category: 'opex', valueType: 'amount', allocationScope: { type: 'global' } },
     { id: 'aws-cloud', name: 'AWS Sunucu Hizmetleri', amount: 3420, frequency: 'Aylık', category: 'opex', valueType: 'amount', currency: 'USD', originalAmount: 100, exchangeRate: 34.20, allocationScope: { type: 'channel', target: 'Web Sitesi' } },
+    { id: 'ikas-platform', name: 'Ikas Altyapı Ücreti', amount: 3500, frequency: 'Aylık', category: 'opex', valueType: 'amount', allocationScope: { type: 'channel', target: 'Web Sitesi' } },
 
     // SPECIAL (Example for Category Scope)
     { id: 'packaging', name: 'Özel Ambalaj Gideri', amount: 1500, frequency: 'Aylık', category: 'opex', valueType: 'amount', allocationScope: { type: 'category', target: 'Hassas Ürünler' } },

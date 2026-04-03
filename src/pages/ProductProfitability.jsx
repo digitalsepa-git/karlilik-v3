@@ -18,6 +18,7 @@ import { useData } from '../context/DataContext';
 import { getFallbackProductImage } from '../hooks/useOrdersLive';
 import { useGoogleAnalytics } from '../hooks/useGoogleAnalytics';
 import { expensesData, calculateDailyExpense } from '../data/expensesData';
+import productCosts from '../data/productCosts.json';
 
 export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
     // Utility Formatting Functions
@@ -40,11 +41,15 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
 
     const getDateRangeBounds = (rangeFilter) => {
         const now = new Date();
-        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        
-        switch(rangeFilter) {
+
+        // Form strict TRT (UTC+3) midnight
+        const trtNow = new Date(now.getTime() + (3 * 60 * 60 * 1000));
+        const startOfTRTDay = new Date(Date.UTC(trtNow.getUTCFullYear(), trtNow.getUTCMonth(), trtNow.getUTCDate(), -3, 0, 0));
+        const endOfTRTDay = new Date(startOfTRTDay.getTime() + (24 * 60 * 60 * 1000) - 1);
+
+        switch (rangeFilter) {
             case 'thisMonth':
-                return { start: new Date(now.getFullYear(), now.getMonth(), 1), end: now };
+                return { start: new Date(now.getFullYear(), now.getMonth(), 1), end: endOfTRTDay };
             case 'lastQuarter': {
                 const m = now.getMonth();
                 let startMonth, year = now.getFullYear();
@@ -52,21 +57,48 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                 else if (m >= 2 && m <= 4) startMonth = 2;
                 else if (m >= 5 && m <= 7) startMonth = 5;
                 else startMonth = 8;
-                return { start: new Date(year, startMonth, 1), end: now };
+                return { start: new Date(year, startMonth, 1), end: endOfTRTDay };
             }
             case 'thisYear':
-                return { start: new Date(now.getFullYear(), 0, 1), end: now };
+                return { start: new Date(now.getFullYear(), 0, 1), end: endOfTRTDay };
             default:
                 if (rangeFilter && rangeFilter.startsWith('custom:')) {
                     const parts = rangeFilter.split(':');
                     return { start: new Date(parts[1] + 'T00:00:00Z'), end: new Date(parts[2] + 'T23:59:59.999Z') };
                 }
-                return { start: new Date(startOfDay.getTime() - 29 * 24 * 60 * 60 * 1000), end: now };
+                return { start: new Date(startOfTRTDay.getTime() - 29 * 24 * 60 * 60 * 1000), end: endOfTRTDay };
         }
     };
 
     const { start: dateStart, end: dateEnd } = React.useMemo(() => getDateRangeBounds(activeDateRange), [activeDateRange]);
     const { data: ga, loading: gaLoading } = useGoogleAnalytics(dateStart.toISOString().split('T')[0], dateEnd.toISOString().split('T')[0]);
+
+    // -----------------------------------------------------------------
+    // Stable "Lifetime/90-Day" Basis for Unit Economics Buffer Pricing
+    // -----------------------------------------------------------------
+    const { start: globalStart, end: globalEnd, totalDays: globalTotalDays } = React.useMemo(() => {
+        const now = new Date();
+        const trtNow = new Date(now.getTime() + (3 * 60 * 60 * 1000));
+        const endOfTRTDay = new Date(Date.UTC(trtNow.getUTCFullYear(), trtNow.getUTCMonth(), trtNow.getUTCDate(), 20, 59, 59));
+
+        let oldestOrderDay = endOfTRTDay;
+        if (fetchedOrders && fetchedOrders.length > 0) {
+            oldestOrderDay = fetchedOrders.reduce((oldest, tx) => {
+                if (!tx.dateRaw) return oldest;
+                const d = new Date(tx.dateRaw);
+                return d < oldest ? d : oldest;
+            }, endOfTRTDay);
+        }
+
+        const absoluteMin = new Date(endOfTRTDay.getTime() - 30 * 24 * 60 * 60 * 1000); // Max 30 days lookback (Last 1 Month)
+        const actualStart = oldestOrderDay < absoluteMin ? absoluteMin : oldestOrderDay;
+
+        const spanDays = Math.max(1, Math.ceil((endOfTRTDay.getTime() - actualStart.getTime()) / (1000 * 60 * 60 * 24)));
+        return { start: actualStart, end: endOfTRTDay, totalDays: spanDays };
+    }, [fetchedOrders]);
+
+    const { data: globalGa } = useGoogleAnalytics(globalStart.toISOString().split('T')[0], globalEnd.toISOString().split('T')[0]);
+    // -----------------------------------------------------------------
 
     const { filteredOrders, filteredOrdersPrev } = React.useMemo(() => {
         if (!fetchedOrders) return { filteredOrders: [], filteredOrdersPrev: [] };
@@ -88,7 +120,7 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
 
         const current = fetchedOrders.filter(tx => filterOrder(tx, dateStart, dateEnd));
         const prev = fetchedOrders.filter(tx => filterOrder(tx, prevStart, prevEnd));
-        
+
         return { filteredOrders: current, filteredOrdersPrev: prev };
     }, [fetchedOrders, dateStart, dateEnd, activeChannel, activeCategory]);
 
@@ -98,100 +130,129 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
             return { PRODUCTS: [], TABLE_PRODUCTS: [], totalSales: 0, totalCOGS: 0, totalShipping: 0, totalCommission: 0, totalTax: 0, totalFixedCost: 0, totalReturnAmt: 0, totalReturnQty: 0, TOTAL_AD_BUDGET: 0 };
         }
 
-        // Aggregate order data by product name (or SKU) using filteredOrders
-        const orderStats = {};
-        const orderStatsPrev = {};
-        
-        filteredOrdersPrev.forEach(order => {
-            const prodName = order.productName || 'Bilinmeyen Ürün';
-            if (!orderStatsPrev[prodName]) {
-                orderStatsPrev[prodName] = { unitsSold: 0, revenue: 0, returns: 0, returnAmt: 0 };
-            }
-            const qty = order.quantity || 1; 
-            const isReturn = order.statusObj?.label === 'İade' || order.statusObj?.label === 'İptal' || order.statusObj?.label === 'CANCELLED' || order.statusObj?.label === 'REFUNDED';
-            if (isReturn) {
-                orderStatsPrev[prodName].returns += qty;
-                orderStatsPrev[prodName].returnAmt += order.revenue || 0;
-            } else {
-                orderStatsPrev[prodName].unitsSold += qty;
-                orderStatsPrev[prodName].revenue += order.revenue || 0;
-            }
-        });
-
-        filteredOrders.forEach(order => {
-            const prodName = order.productName || 'Bilinmeyen Ürün';
-            if (!orderStats[prodName]) {
-                orderStats[prodName] = { unitsSold: 0, revenue: 0, returns: 0, returnAmt: 0, cogs: 0, shipping: 0, commission: 0, tax: 0 };
-            }
-            // Fallback to 1 unit if quantity is missing
-            const qty = order.quantity || 1; 
-            
-            const isReturn = order.statusObj?.label === 'İade' || order.statusObj?.label === 'İptal' || order.statusObj?.label === 'CANCELLED' || order.statusObj?.label === 'REFUNDED';
-            
-            if (isReturn) {
-                orderStats[prodName].returns += qty;
-                orderStats[prodName].returnAmt += order.revenue || 0;
-            } else {
-                orderStats[prodName].unitsSold += qty;
-                // Use order.revenue directly as useOrders exports it
-                orderStats[prodName].revenue += order.revenue || 0;
-                orderStats[prodName].cogs += order.cogs || 0;
-                orderStats[prodName].shipping += order.shipping || 0;
-                orderStats[prodName].commission += order.commission || 0;
-                orderStats[prodName].tax += order.tax || 0;
-            }
-        });
-
         // -------------------------------------------------------------
         // PRE-PASS: Calculate Macro Totals & Overheads For 100% ABC Accuracy
         // -------------------------------------------------------------
         let sumSales = 0, sumCOGS = 0, sumRetAmt = 0, sumRetQty = 0;
         let sumShipping = 0, sumCommission = 0, sumTax = 0;
-        
+
         filteredOrders.forEach(order => {
             const isReturn = order.statusObj?.label === 'İade' || order.statusObj?.label === 'İptal' || order.statusObj?.label === 'CANCELLED' || order.statusObj?.label === 'REFUNDED';
             if (isReturn) {
                 sumRetAmt += Math.abs(order.revenue || 0);
                 sumRetQty += order.quantity || 1;
+                sumShipping += order.shipping || 0;
+            } else {
+                sumSales += order.revenue || 0;
+                sumCOGS += order.cogs || 0;
+                sumShipping += order.shipping || 0;
+                sumCommission += order.commission || 0;
+                sumTax += order.tax || 0;
             }
-            sumSales += order.revenue || 0;
-            sumCOGS += order.cogs || 0;
-            sumShipping += order.shipping || 0;
-            sumCommission += order.commission || 0;
-            sumTax += order.tax || 0;
         });
 
         // Derive ABC prorated fixed costs
         const _diffDays = Math.max(1, Math.ceil((dateEnd - dateStart) / (1000 * 60 * 60 * 24)));
-        const proratedFixedCost = expensesData
-            .filter(e => e.valueType === 'amount' && e.category !== 'tax' && e.category !== 'finance')
-            .reduce((sum, e) => sum + calculateDailyExpense(e), 0) * _diffDays;
+        
+        // Isolate Ikas Only Expenses vs Shared Overheads
+        let sumProratedShared = 0;
+        let sumProratedIkasOnly = 0;
+
+        expensesData.filter(e => e.valueType === 'amount' && e.category !== 'tax' && e.category !== 'finance').forEach(e => {
+            const expenseCost = calculateDailyExpense(e) * _diffDays;
+            const isIkasInfra = e.id === 'aws-cloud' || e.id === 'ikas-platform' || (e.name || '').toLowerCase().includes('aws') || (e.name || '').toLowerCase().includes('altyapı');
+            if (isIkasInfra) sumProratedIkasOnly += expenseCost;
+            else sumProratedShared += expenseCost;
+        });
 
         const proratedTaxAndFinance = expensesData
             .filter(e => e.valueType === 'amount' && (e.category === 'tax' || e.category === 'finance'))
             .reduce((sum, e) => sum + calculateDailyExpense(e), 0) * _diffDays;
 
-        const TOTAL_FIXED_OVERHEAD = proratedFixedCost + proratedTaxAndFinance;
+        const TOTAL_SHARED_FIXED_OVERHEAD = sumProratedShared + proratedTaxAndFinance;
+        const IKAS_ONLY_FIXED_OVERHEAD = sumProratedIkasOnly;
         // -------------------------------------------------------------
 
-        const matchedOrderKeys = new Set();
-        
+        const matchedOrderUids = new Set();
+        const matchedPrevOrderUids = new Set();
+
         // First Pass: Enriched RAW Products with Sales Velocity
         const enrichedRawProducts = fetchedProducts.map((p, idx) => {
-            // Find matching order stats safely without double counting
-            const pName = p.name || '';
-            const matchName = Object.keys(orderStats).find(name => {
-                if (matchedOrderKeys.has(name)) return false;
-                if (!name || !pName) return false;
-                const safeName = String(name).toLowerCase();
-                const safePName = String(pName).toLowerCase();
-                return safeName.includes(safePName) || safePName.includes(safeName);
+            
+            // Match Current Orders exactly mapping SKUs and Variants
+            const pOrders = filteredOrders.filter(o => {
+                if (matchedOrderUids.has(o._uid)) return false;
+                
+                let isMatch = false;
+                // 1. Strict SKU / Multi-Variant Matching
+                if (o.sku && p.allSkus && p.allSkus.includes(String(o.sku))) isMatch = true;
+                else if (o.sku && p.sku && String(o.sku) === String(p.sku)) isMatch = true;
+                
+                // 2. Fallback Loose Name Matching
+                else if (o.productName && p.name) {
+                    const safeO = String(o.productName).toLowerCase().trim();
+                    const safeP = String(p.name).toLowerCase().trim();
+                    if (safeO.includes(safeP) || safeP.includes(safeO)) isMatch = true;
+                }
+                
+                if (isMatch) matchedOrderUids.add(o._uid);
+                return isMatch;
             });
-            const stats = matchName ? orderStats[matchName] : { unitsSold: 0, revenue: 0, returns: 0, returnAmt: 0 };
-            const statsPrev = matchName && orderStatsPrev[matchName] ? orderStatsPrev[matchName] : { unitsSold: 0, revenue: 0, returns: 0, returnAmt: 0 };
-            
-            if (matchName) matchedOrderKeys.add(matchName);
-            
+
+            // Match Previous Orders exactly mapping SKUs and Variants
+            const pOrdersPrev = filteredOrdersPrev.filter(o => {
+                if (matchedPrevOrderUids.has(o._uid)) return false;
+                
+                let isMatch = false;
+                if (o.sku && p.allSkus && p.allSkus.includes(String(o.sku))) isMatch = true;
+                else if (o.sku && p.sku && String(o.sku) === String(p.sku)) isMatch = true;
+                else if (o.productName && p.name) {
+                    const safeO = String(o.productName).toLowerCase().trim();
+                    const safeP = String(p.name).toLowerCase().trim();
+                    if (safeO.includes(safeP) || safeP.includes(safeO)) isMatch = true;
+                }
+                
+                if (isMatch) matchedPrevOrderUids.add(o._uid);
+                return isMatch;
+            });
+
+            // Calculate aggregated global stats
+            const stats = { unitsSold: 0, revenue: 0, returns: 0, returnAmt: 0, cogs: 0, shipping: 0, commission: 0, tax: 0 };
+            pOrders.forEach(o => {
+                const qty = o.quantity || 1;
+                const isReturn = o.statusObj?.label === 'İade' || o.statusObj?.label === 'İptal' || o.statusObj?.label === 'CANCELLED' || o.statusObj?.label === 'REFUNDED';
+                if (isReturn) {
+                    stats.returns += qty;
+                    stats.returnAmt += Math.abs(o.revenue || 0);
+                    stats.shipping += o.shipping || 0;
+                } else {
+                    stats.revenue += o.revenue || 0;
+                    stats.cogs += o.cogs || 0;
+                    stats.shipping += o.shipping || 0;
+                    stats.commission += o.commission || 0;
+                    stats.tax += o.tax || 0;
+                }
+                stats.unitsSold += qty;
+            });
+
+            const statsPrev = { unitsSold: 0, revenue: 0, returns: 0, returnAmt: 0, cogs: 0, shipping: 0, commission: 0, tax: 0 };
+            pOrdersPrev.forEach(o => {
+                const qty = o.quantity || 1;
+                const isReturn = o.statusObj?.label === 'İade' || o.statusObj?.label === 'İptal' || o.statusObj?.label === 'CANCELLED' || o.statusObj?.label === 'REFUNDED';
+                if (isReturn) {
+                    statsPrev.returns += qty;
+                    statsPrev.returnAmt += Math.abs(o.revenue || 0);
+                    statsPrev.shipping += o.shipping || 0;
+                } else {
+                    statsPrev.revenue += o.revenue || 0;
+                    statsPrev.cogs += o.cogs || 0;
+                    statsPrev.shipping += o.shipping || 0;
+                    statsPrev.commission += o.commission || 0;
+                    statsPrev.tax += o.tax || 0;
+                }
+                statsPrev.unitsSold += qty;
+            });
+
             const actualUnits = stats.unitsSold;
             const unitsSold = actualUnits > 0 ? actualUnits : 0;
             const actualPrevUnits = statsPrev.unitsSold;
@@ -200,11 +261,16 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
             const salesPrice = unitsSold > 0 ? stats.revenue / unitsSold : p.price;
 
             // Load real aggregated costs from orderStats properly summing KDV values
-            const cogs = stats.cogs || 0; 
-            const shipping = stats.shipping || 0; 
-            const commission = stats.commission || 0; 
+            const cogs = stats.cogs || 0;
+            const shipping = stats.shipping || 0;
+            const commission = stats.commission || 0;
             const tax = stats.tax || 0;
-            
+
+            const prevCogs = statsPrev.cogs || 0;
+            const prevShipping = statsPrev.shipping || 0;
+            const prevCommission = statsPrev.commission || 0;
+            const prevTax = statsPrev.tax || 0;
+
             return {
                 ...p,
                 id: idx + 1,
@@ -215,50 +281,198 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                 shipping,
                 commission,
                 tax,
+                prevCogs,
+                prevShipping,
+                prevCommission,
+                prevTax,
                 actualRevenue: stats.revenue,
                 prevRevenue: statsPrev.revenue,
                 returnQty: stats.returns,
                 returnAmt: stats.returnAmt,
-                channels: []
+                channels: [],
+                pOrders
             };
         });
 
-        const TOTAL_REVENUE = enrichedRawProducts.reduce((sum, p) => sum + p.actualRevenue, 0) || 1; // Prevent DivBy0
+        const TOTAL_UNITS = enrichedRawProducts.reduce((sum, p) => sum + p.unitsSold, 0) || 1; // Prevent DivBy0
+        const TOTAL_PREV_UNITS = enrichedRawProducts.reduce((sum, p) => sum + p.prevUnitsSold, 0) || 1;
+        const TOTAL_PREV_REVENUE = enrichedRawProducts.reduce((sum, p) => sum + (p.prevRevenue || 0), 0) || 1;
+
+        // -------------------------------------------------------------
+        // NEW: "Son 3 Aylık / Eldeki Tüm Veri" Sabit & Reklam Payı Hesaplaması
+        // (De-coupled from the active UI Date Dropdown filter)
+        // -------------------------------------------------------------
+        let GLOBAL_TOTAL_UNITS = 0;
+        let GLOBAL_TOTAL_REVENUE = 0;
+        let GLOBAL_IKAS_REVENUE = 0;
+        let GLOBAL_IKAS_UNITS = 0;
+        
+        fetchedOrders.forEach(o => {
+            if (!o.dateRaw) return;
+            const d = new Date(o.dateRaw);
+            if (d >= globalStart && d <= globalEnd) {
+                const isReturn = o.statusObj?.label === 'İade' || o.statusObj?.label === 'İptal' || o.statusObj?.label === 'CANCELLED' || o.statusObj?.label === 'REFUNDED';
+                if (!isReturn) {
+                    const qty = o.quantity || 1;
+                    GLOBAL_TOTAL_UNITS += qty;
+                    GLOBAL_TOTAL_REVENUE += (o.revenue || 0);
+                    const chLower = o.channel?.toLowerCase() || '';
+                    if (chLower.includes('web') || chLower.includes('ikas')) {
+                        GLOBAL_IKAS_REVENUE += (o.revenue || 0);
+                        GLOBAL_IKAS_UNITS += qty;
+                    }
+                }
+            }
+        });
+        GLOBAL_TOTAL_UNITS = Math.max(1, GLOBAL_TOTAL_UNITS); // Prevent DivBy0
+        GLOBAL_TOTAL_REVENUE = Math.max(1, GLOBAL_TOTAL_REVENUE);
+        GLOBAL_IKAS_REVENUE = Math.max(1, GLOBAL_IKAS_REVENUE);
+        GLOBAL_IKAS_UNITS = Math.max(1, GLOBAL_IKAS_UNITS);
+
+        const GLOBAL_AD_BUDGET = globalGa?.totalAdCost || 0;
+
+        const GLOBAL_TOTAL_FIXED = expensesData
+            .filter(e => e.valueType === 'amount')
+            .reduce((sum, e) => sum + calculateDailyExpense(e), 0) * globalTotalDays; // Not actually used for unit economics further down
+
+        // YÖNTEM 1: Reklam Gider Payı (Ikas Cirosu üstünden hesaplanmış % Oran)
+        // Dönemlik Filtrelenmiş Reklam Bütçesi
         const TOTAL_AD_BUDGET = ga?.totalAdCost || 0;
+        const globalAdRatio = GLOBAL_IKAS_REVENUE > 0 ? (TOTAL_AD_BUDGET / GLOBAL_IKAS_REVENUE) : 0;
+        
+        // YÖNTEM 2: Şirket Gider Payını (CİROYA % OLARAK ORANLIYORUZ)
+        // Kullanıcı isteğine göre Şirket Gideri ürünün fiyatına oranla artar (Yüzdesel yüklenir).
+        const globalSharedFixedRatio = TOTAL_SHARED_FIXED_OVERHEAD / Math.max(1, GLOBAL_TOTAL_REVENUE);
+        const globalIkasOnlyFixedRatio = IKAS_ONLY_FIXED_OVERHEAD / Math.max(1, GLOBAL_IKAS_REVENUE);
+        const globalIkasFullFixedRatio = globalSharedFixedRatio + globalIkasOnlyFixedRatio;
+        const globalFixedRatio = globalIkasFullFixedRatio; // Keep variable assignment intact for broad reference
+
+        // For Previous scope comparison (mock tracking similar logic if needed)
+        const TOTAL_PREV_AD_BUDGET = ga?.prevTotalAdCost || TOTAL_AD_BUDGET;
+
+        const prevGlobalUnitAdCost = TOTAL_PREV_AD_BUDGET / Math.max(1, TOTAL_PREV_UNITS);
+        const prevGlobalFixedRatio = TOTAL_SHARED_FIXED_OVERHEAD / Math.max(1, TOTAL_PREV_REVENUE);
+        // -------------------------------------------------------------
 
         // Second Pass: Computed Products with mathematically strict Allocation
         const computedProducts = enrichedRawProducts.map(product => {
-            const revenueShare = TOTAL_REVENUE > 0 ? product.actualRevenue / TOTAL_REVENUE : 0;
-            const allocatedAdBudget = revenueShare * TOTAL_AD_BUDGET;
-            const allocatedFixed = revenueShare * TOTAL_FIXED_OVERHEAD;
+            // Ikas bazlı Revenue ve Adet bulma (Reklam sadece ona orantılı dağılır, altyapı ona verilir)
+            let productIkasRev = 0;
+            if (product.pOrders) {
+                product.pOrders.forEach(o => {
+                    const chLower = o.channel?.toLowerCase() || '';
+                    const isIkasOrWeb = chLower.includes('web') || chLower.includes('ikas');
+                    if (isIkasOrWeb && o.statusObj?.label !== 'İade' && o.statusObj?.label !== 'İptal' && o.statusObj?.label !== 'CANCELLED' && o.statusObj?.label !== 'REFUNDED') {
+                        productIkasRev += (o.revenue || 0);
+                    }
+                });
+            }
 
-            // Strict ABC computation explicitly summing physical COGS, Ads, Tax + ALL global expenses
-            const totalVariableCosts = product.cogs + product.shipping + product.commission + product.tax + allocatedAdBudget + allocatedFixed;
+            // REKLAM (Sadece Ikas Cirosu Üstünden), SABİT GİDER (Ciro Oranı Tümü + Sadece Ikas Altyapı Ciro Oranı)
+            const allocatedAdBudget = globalAdRatio * productIkasRev;
+            const allocatedFixed = (globalSharedFixedRatio * product.actualRevenue) + (globalIkasOnlyFixedRatio * productIkasRev);
+
+            // Önceki dönem değişkenleri
+            const prevGlobalUnitAdCost = TOTAL_PREV_AD_BUDGET / Math.max(1, TOTAL_PREV_UNITS);
             
-            // True corporate profit for this specific underlying product matching exactly the Dashboard scale
-            const netProfit = product.actualRevenue > 0 ? product.actualRevenue - totalVariableCosts : 0;
-            const netProfitPerUnit = product.unitsSold > 0 ? netProfit / product.unitsSold : (product.salesPrice * 0.15); // generic fallback
+            const prevAllocatedAdBudget = prevGlobalUnitAdCost * product.prevUnitsSold;
+            // Eski veri mimarisini bozmamak adına prevFixed approximate
+            const prevAllocatedFixed = prevGlobalFixedRatio * (product.actualRevenue || 0);
 
-            const margin = product.actualRevenue > 0 ? (netProfit / product.actualRevenue) * 100 : 0;
+            // Tampon Fiyat (Buffer Price - Break-Even) Maktu reklam hesabı artık farklı çalışacağı için tahmini bir değer kullanıyoruz
+            let bufferPrice = 0;
+            if (product.unitsSold > 0 && product.actualRevenue > 0) {
+                const unitSmm = product.cogs / product.unitsSold;
+                const unitShipping = product.shipping / product.unitsSold;
+                
+                // Karışık (Blended) Komisyon, Reklam ve Şirket Gideri Oranları (Hepsi Ciro Bazlı)
+                const blended_c_rate = product.commission / product.actualRevenue;
+                const blended_a_rate = allocatedAdBudget / product.actualRevenue;
+                const blended_f_rate = allocatedFixed / product.actualRevenue;
+                
+                // Tam Cebirsel Break-Even Çözümü (Vergi / 6 Input Mahsuplaşması Dahil)
+                // Şirket Gideri Fiyata Oransal ise Paydada yer alır!
+                const bufferNumerator = unitSmm + unitShipping;
+                const bufferDenominator = 1 - blended_c_rate - (1.2 * blended_a_rate) - (1.2 * blended_f_rate);
+                
+                bufferPrice = bufferDenominator > 0 ? (bufferNumerator / bufferDenominator) : 0;
+            }
+
+            // Full Absorption logic for Unit Economics table (including Fixed Overhead) so the table visually balances
+            const totalVariableCosts = product.cogs + product.shipping + product.commission + product.tax + allocatedAdBudget + allocatedFixed;
+            const prevTotalVariableCosts = product.prevCogs + product.prevShipping + product.prevCommission + product.prevTax + prevAllocatedAdBudget;
+
+            // True corporate profit for this specific underlying product matching exactly the Dashboard scale
+            const netProfit = product.actualRevenue - totalVariableCosts;
+            const netProfitPerUnit = product.unitsSold > 0 ? netProfit / product.unitsSold : 0;
+
+            const margin = product.actualRevenue !== 0 ? (netProfit / product.actualRevenue) * 100 : 0;
 
             const currentTotalProfit = netProfit;
-            const prevNetProfitPerUnit = product.prevUnitsSold > 0 ? (product.prevRevenue / product.prevUnitsSold) : product.salesPrice;
-            const prevTotalProfit = product.prevUnitsSold * prevNetProfitPerUnit;
+            const prevTotalProfit = product.prevRevenue - prevTotalVariableCosts;
+            const prevNetProfitPerUnit = product.prevUnitsSold > 0 ? (prevTotalProfit / product.prevUnitsSold) : 0;
 
             const trendValue = currentTotalProfit - prevTotalProfit;
-            const trendPercent = prevTotalProfit > 0 ? (trendValue / Math.abs(prevTotalProfit)) * 100 : 0;
-            
+            let trendPercent = 0;
+            if (prevTotalProfit !== 0) {
+                trendPercent = (trendValue / Math.abs(prevTotalProfit)) * 100;
+            } else if (trendValue > 0) {
+                trendPercent = 100;
+            } else if (trendValue < 0) {
+                trendPercent = -100;
+            }
+
             const trendUnits = product.unitsSold - product.prevUnitsSold;
-            const trendUnitsPercent = product.prevUnitsSold > 0 ? (trendUnits / Math.abs(product.prevUnitsSold)) * 100 : 0;
+            let trendUnitsPercent = 0;
+            if (product.prevUnitsSold > 0) {
+                trendUnitsPercent = (trendUnits / Math.abs(product.prevUnitsSold)) * 100;
+            } else if (trendUnits > 0) {
+                trendUnitsPercent = 100;
+            } else if (trendUnits < 0) {
+                trendUnitsPercent = -100;
+            }
+
+            // Dynamic Diagnosis Engine for the Trend Modal
+            let diagnosis = null;
+            if (trendValue < 0) {
+                if (allocatedAdBudget > (product.actualRevenue * 0.2)) {
+                    diagnosis = {
+                        type: 'high_cpa',
+                        badge: 'Yüksek Reklam',
+                        actionLabel: 'Reklam Analizi',
+                        actionTooltip: 'Reklam harcaması ciroya oranla çok yüksek. ACOS/ROAS optimizasyonu önerilir.',
+                        actionColor: 'red',
+                        actionIcon: AlertCircle
+                    };
+                } else if (trendUnits < 0) {
+                    diagnosis = {
+                        type: 'volume_drop',
+                        badge: 'Hacim Düşüşü',
+                        actionLabel: 'Kampanya Öner',
+                        actionTooltip: 'Geçen aya göre satış adetlerinde daralma var. Bundle kurgusu gerekebilir.',
+                        actionColor: 'blue',
+                        actionIcon: Package
+                    };
+                } else if (margin < 15) {
+                    diagnosis = {
+                        type: 'low_margin',
+                        badge: 'Kâr Marjı Daralması',
+                        actionLabel: 'Fiyat Simülasyonu',
+                        actionTooltip: 'Operasyon maliyetleri marjı yutuyor. Fiyat artırma esnekliği test edilmeli.',
+                        actionColor: 'amber',
+                        actionIcon: TrendingUp
+                    };
+                }
+            }
 
             return {
                 ...product,
                 totalVariableCosts,
                 adSpend: allocatedAdBudget,
-                revenueShare,
                 allocatedAdBudget,
                 totalAdBudget: TOTAL_AD_BUDGET,
                 netProfit: netProfitPerUnit,
+                actualNetProfit: netProfit,
                 margin,
                 channelDetails: product.channels,
                 trendValue,
@@ -269,7 +483,8 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                 trendUnitsPercent,
                 sparklineData: generateSparklineData(prevNetProfitPerUnit, netProfit),
                 fixedCost: allocatedFixed,
-                diagnosis: null
+                bufferPrice,
+                diagnosis
             };
         });
 
@@ -279,47 +494,171 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
             const returnAmt = p.returnAmt;
             const totalProductRev = p.actualRevenue;
 
+            const productSku = p.sku || `SKU-${p.name ? p.name.substring(0, 6) : 'DEFAULT'}`;
+            const fallbackCost = productCosts[productSku] || productCosts["DEFAULT"];
+
             // Compute per unit costs for the table (table columns denote `/Birim`)
-            const cunit = p.unitsSold > 0 ? p.cogs / p.unitsSold : 0;
-            const sunit = p.unitsSold > 0 ? p.shipping / p.unitsSold : 0;
-            const comunit = p.unitsSold > 0 ? p.commission / p.unitsSold : 0;
-            const aunit = p.unitsSold > 0 ? p.adSpend / p.unitsSold : 0;
-            const taxunit = p.unitsSold > 0 ? p.tax / p.unitsSold : 0;
-            const fixedunit = p.unitsSold > 0 ? p.fixedCost / p.unitsSold : 0;
+            const computeRow = (units, salesPrice, cogs, shipping, commission, allocatedAd, allocatedFixed, isTrendyol) => {
+                let _cunit = 0; let _sunit = 0; let _comunit = 0; let _aunit = 0; 
+                let _taxunit = 0; let _fixedunit = 0; let _finalMargin = 0; let _finalUnitNetProfit = 0; let _finalBufferPrice = 0;
+
+                if (units > 0) {
+                    _cunit = cogs / units;
+                    _sunit = shipping / units;
+                    
+                    // SABİTLENMİŞ KOMİSYON ORANI %2 Ikas vs %15 Trendyol
+                    _comunit = isTrendyol ? (salesPrice * 0.15) : (salesPrice * 0.02);
+                    
+                    // REKLAM HARCAMASI SADECE IKASA BÖLÜŞTÜRÜLDÜ - CİRO ORANIYLA
+                    _aunit = isTrendyol ? 0 : (salesPrice * globalAdRatio);
+                    
+                    // SABİT GİDER CİRO ÜZERİNDEN YÜZDESEL ORANLANIR! TREDNYOL'DA IKAS ALTYAPISI HARİÇ.
+                    const currentFixedRatio = isTrendyol ? globalSharedFixedRatio : globalIkasFullFixedRatio;
+                    _fixedunit = salesPrice * currentFixedRatio;
+                    
+                    const kdvRate = 0.20;
+                    const outputVat = salesPrice - (salesPrice / (1 + kdvRate));
+                    const cogsVat = _cunit - (_cunit / (1 + kdvRate));
+                    const shippingVat = _sunit - (_sunit / (1 + kdvRate));
+                    const commissionVat = _comunit - (_comunit / (1 + kdvRate));
+                    _taxunit = Math.max(0, outputVat - cogsVat - shippingVat - commissionVat);
+                    
+                    const c_rate = isTrendyol ? 0.15 : 0.02;
+                    const a_rate = isTrendyol ? 0 : globalAdRatio;
+                    const f_rate = currentFixedRatio;
+                    
+                    // Tam Cebirsel Çözüm: Şirket Gideri ve Reklam oransal (denominatorde), Sabit olanlar (Payda) SMM ve Kargo.
+                    const bufferNumerator = _cunit + _sunit;
+                    const bufferDenominator = 1 - c_rate - (1.2 * a_rate) - (1.2 * f_rate);
+                    _finalBufferPrice = bufferDenominator > 0 ? (bufferNumerator / bufferDenominator) : 0;
+                    
+                    const hypotheticalCosts = _cunit + _sunit + _comunit + _taxunit + _aunit + _fixedunit;
+                    _finalUnitNetProfit = salesPrice - hypotheticalCosts;
+                    _finalMargin = (_finalUnitNetProfit / salesPrice) * 100;
+                } else {
+                    _cunit = Math.round(salesPrice * 0.25);
+                    _sunit = fallbackCost.shipping;
+                    
+                    // SABİTLENMİŞ KOMİSYON ORANI %2 Ikas vs %15 Trendyol
+                    _comunit = isTrendyol ? (salesPrice * 0.15) : (salesPrice * 0.02);
+
+                    const kdvRate = 0.20;
+                    const outputVat = salesPrice - (salesPrice / (1 + kdvRate));
+                    const cogsVat = _cunit - (_cunit / (1 + kdvRate));
+                    const shippingVat = _sunit - (_sunit / (1 + kdvRate));
+                    const commissionVat = _comunit - (_comunit / (1 + kdvRate));
+                    _taxunit = Math.max(0, outputVat - cogsVat - shippingVat - commissionVat);
+
+                    // REKLAM HARCAMASI SADECE IKASA BÖLÜŞTÜRÜLDÜ - CİRO ORANIYLA
+                    _aunit = isTrendyol ? 0 : (salesPrice * globalAdRatio);
+                    
+                    // SABİT GİDER CİRO ÜZERİNDEN YÜZDESEL ORANLANIR! TREDNYOL'DA IKAS ALTYAPISI HARİÇ.
+                    const currentFixedRatio = isTrendyol ? globalSharedFixedRatio : globalIkasFullFixedRatio;
+                    _fixedunit = salesPrice * currentFixedRatio;
+
+                    const c_rate = isTrendyol ? 0.15 : 0.02;
+                    const a_rate = isTrendyol ? 0 : globalAdRatio;
+                    const f_rate = currentFixedRatio;
+                    
+                    // 0 satışlı varyantlarda SMM fiyatın 0.25'i varsayılır, SMM fiyata oransal hale gelir.
+                    // Algebrası şuna evrilir: P(0.75 - c - 1.2a - 1.2f) = Kargo
+                    const bufferNumerator = _sunit;
+                    const bufferDenominator = 0.75 - c_rate - (1.2 * a_rate) - (1.2 * f_rate);
+                    _finalBufferPrice = bufferDenominator > 0 ? (bufferNumerator / bufferDenominator) : 0;
+
+                    const hypotheticalCosts = _cunit + _sunit + _comunit + _taxunit + _aunit + _fixedunit;
+                    _finalUnitNetProfit = salesPrice - hypotheticalCosts;
+                    _finalMargin = (_finalUnitNetProfit / salesPrice) * 100;
+                }
+                return { cunit:_cunit, sunit:_sunit, comunit:_comunit, aunit:_aunit, taxunit:_taxunit, fixedunit:_fixedunit, finalMargin:_finalMargin, finalUnitNetProfit:_finalUnitNetProfit, finalBufferPrice:_finalBufferPrice };
+            };
+
+            // Calculate Trendyol metrics decoupled from global stats
+            // We can just reuse pOrders and filter by channel! This saves us another loop visually!
+            let tyUnitsRaw = 0; let tyRevRaw = 0; let tyCogsRaw = 0; 
+            let tyShipRaw = 0; let tyCommRaw = 0; let tyTaxRaw = 0;
+            if (p.pOrders) {
+                p.pOrders.forEach(o => {
+                    if (o.channel?.toLowerCase().includes('trendyol')) {
+                    const isReturn = o.statusObj?.label === 'İade' || o.statusObj?.label === 'İptal' || o.statusObj?.label === 'CANCELLED' || o.statusObj?.label === 'REFUNDED';
+                    const qty = o.quantity || 1;
+                    if (isReturn) {
+                        tyShipRaw += o.shipping || 0;
+                    } else {
+                        tyRevRaw += o.revenue || 0;
+                        tyCogsRaw += o.cogs || 0;
+                        tyShipRaw += o.shipping || 0;
+                        tyCommRaw += o.commission || 0;
+                        tyTaxRaw += o.tax || 0;
+                    }
+                    tyUnitsRaw += qty;
+                }
+            });
+            }
+
+            // Derive Ikas absolute counts
+            let ikasUnits = Math.max(0, p.unitsSold - tyUnitsRaw);
+            let ikasRev = Math.max(0, p.actualRevenue - tyRevRaw);
+            let ikasCogs = Math.max(0, p.cogs - tyCogsRaw);
+            let ikasShip = Math.max(0, p.shipping - tyShipRaw);
+            let ikasComm = Math.max(0, p.commission - tyCommRaw);
             
-            // Değişken ve Sabit kalemleri table görseli için doğru sumla. 
-            // KDV dahil edildi!
-            const unitVariableCost = sunit + comunit + taxunit + fixedunit; 
+            const ikasAd = ikasUnits > 0 ? (ikasUnits / p.unitsSold) * p.adSpend : 0;
+            const ikasFixed = ikasRev > 0 ? (ikasRev / p.actualRevenue) * p.fixedCost : 0;
+            const tyAd = tyUnitsRaw > 0 ? (tyUnitsRaw / p.unitsSold) * p.adSpend : 0;
+            const tyFixed = tyRevRaw > 0 ? (tyRevRaw / p.actualRevenue) * p.fixedCost : 0;
+            
+            const salesPriceIkas = ikasUnits > 0 ? ikasRev / ikasUnits : p.salesPrice;
+            const salesPriceTy = tyUnitsRaw > 0 ? tyRevRaw / tyUnitsRaw : p.salesPrice;
+
+            const mainRow = computeRow(ikasUnits, salesPriceIkas, ikasCogs, ikasShip, ikasComm, ikasAd, ikasFixed, false);
+            const tyRow = computeRow(tyUnitsRaw, salesPriceTy, tyCogsRaw, tyShipRaw, tyCommRaw, tyAd, tyFixed, true);
+
+            // Değişken kalemleri (Kargo + Komisyon) Operasyonel Giderler olarak grupla
+            const unitOperasyonelGiderler = mainRow.sunit + mainRow.comunit;
 
             return {
                 ...p,
-                price: p.salesPrice,
-                sold: p.unitsSold,
-                revenue: totalProductRev,
-                returns: returnQty,
-                returnAmt,
-                cogs: cunit,
-                variableCosts: unitVariableCost,
-                ads: aunit,
-                fixed: 0,
-                netProfitTotal: p.unitsSold * p.netProfit,
-                isLoss: (p.unitsSold * p.netProfit) < 0
+                price: p.salesPrice, // Used strictly for display fallback
+                salesPrice: salesPriceIkas, // Overwrite underlying price for Ikas view
+                cogs: mainRow.cunit,
+                shipping: mainRow.sunit,
+                commission: mainRow.comunit,
+                operasyonelGiderler: unitOperasyonelGiderler,
+                fixedCost: mainRow.fixedunit,
+                ads: mainRow.aunit,
+                tax: mainRow.taxunit,
+                unitNetProfit: mainRow.finalUnitNetProfit,
+                bufferPrice: mainRow.finalBufferPrice,
+                margin: mainRow.finalMargin,
+                trendyolMetrics: {
+                    price: salesPriceTy,
+                    cogs: tyRow.cunit,
+                    shipping: tyRow.sunit,
+                    commission: tyRow.comunit,
+                    fixedCost: tyRow.fixedunit,
+                    ads: tyRow.aunit,
+                    tax: tyRow.taxunit,
+                    unitNetProfit: tyRow.finalUnitNetProfit,
+                    bufferPrice: tyRow.finalBufferPrice,
+                    margin: tyRow.finalMargin
+                }
             };
         });
-        
-        // Sort Table Products by Sales Revenue Descending
-        tableProducts.sort((a,b) => b.revenue - a.revenue);
 
-        return { 
-            PRODUCTS: computedProducts, 
-            TABLE_PRODUCTS: tableProducts, 
-            totalSales: sumSales, 
-            totalCOGS: sumCOGS, 
+        // Sort Table Products by Sales Revenue Descending
+        tableProducts.sort((a, b) => b.revenue - a.revenue);
+
+        return {
+            PRODUCTS: computedProducts,
+            TABLE_PRODUCTS: tableProducts,
+            totalSales: sumSales,
+            totalCOGS: sumCOGS,
             totalShipping: sumShipping,
             totalCommission: sumCommission,
             totalTax: sumTax,
-            totalFixedCost: proratedFixedCost + proratedTaxAndFinance,
-            totalReturnAmt: sumRetAmt, 
+            totalFixedCost: TOTAL_SHARED_FIXED_OVERHEAD + IKAS_ONLY_FIXED_OVERHEAD,
+            totalReturnAmt: sumRetAmt,
             totalReturnQty: sumRetQty,
             TOTAL_AD_BUDGET
         };
@@ -368,98 +707,7 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
     const [isMerModalOpen, setIsMerModalOpen] = useState(false);
     const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
 
-    // --- Product Detail Modal State ---
-    const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
-    const [selectedProduct, setSelectedProduct] = useState(null);
-    const [simulationState, setSimulationState] = useState({
-        price: 0,
-        margin: 0,
-        profit: 0,
-        diffMargin: 0,
-        newProfit: 0
-    });
 
-    // --- UP2 Fix: enrichProductData uses real product fields (stock, adSpend) instead of Math.random() ---
-    const enrichProductData = (product) => {
-        const isProfitable = !product.isLoss;
-        const id = product.id || 1;
-
-        // 1. Stock: use real stock from product if available
-        const stock = product.stock !== undefined ? product.stock : 0;
-        const dailySales = product.unitsSold > 0 ? product.unitsSold / 30 : 1;
-        const daysLeft = Math.round(stock / Math.max(dailySales, 0.1));
-
-        // 2. Marketing: No mock data
-        const roas = '0.0';
-        const cr = '0.0';
-
-        // 3. Quality: Base score
-        const marginScore = 0; 
-        const returnScore = 1;
-        const score = (4.0 + marginScore).toFixed(1);
-        // Return rate: deterministic based on margin tier
-        const returnRatePct = isProfitable
-            ? 2 + (id % 5)       // 2-7%
-            : 10 + (id % 15);    // 10-24%
-
-        // 4. Return reasons
-        const reasons = [
-            { label: 'Beden Uymadı', pct: isProfitable ? 30 : 60 },
-            { label: 'Kalite Beklentisi', pct: isProfitable ? 10 : 25 },
-            { label: 'Vazgeçti', pct: isProfitable ? 40 : 10 },
-            { label: 'Kargoda Hasar', pct: 20 },
-        ];
-
-        return { ...product, stock, daysLeft, roas, cr, score, returnRatePct, reasons };
-    };
-
-    const openProductDetail = (product) => {
-        console.log('Opening Product Detail for:', product);
-        if (!product) return;
-
-        const enriched = enrichProductData(product);
-        setSelectedProduct(enriched);
-
-        setSimulationState({
-            price: enriched.price || 0,
-            margin: enriched.margin || 0,
-            profit: enriched.netProfit || 0,
-            diffMargin: 0,
-            newProfit: enriched.netProfit || 0
-        });
-        setIsDetailModalOpen(true);
-    };
-
-    const closeProductDetail = () => {
-        setIsDetailModalOpen(false);
-        setSelectedProduct(null);
-    };
-
-    const updateSimulation = (newPrice) => {
-        if (!selectedProduct) return;
-
-        const price = Number(newPrice);
-        const oldPrice = selectedProduct.price;
-        const totalCost = selectedProduct.cogs + selectedProduct.variableCosts + selectedProduct.ads + selectedProduct.fixed; // Simplified cost model
-
-        // Simulating elasticity: 1% price increase -> 0.5% volume drop (simplified)
-        // For per-unit simulator, we just look at unit profit first
-        const newUnitProfit = price - totalCost;
-        const newMargin = (newUnitProfit / price) * 100;
-
-        setSimulationState(prev => ({
-            ...prev,
-            price: price,
-            newProfit: newUnitProfit,
-            margin: newMargin,
-            diffMargin: newMargin - (selectedProduct.margin || 0)
-        }));
-    };
-
-    const adjustSim = (amount) => {
-        const currentPrice = simulationState.price;
-        updateSimulation(currentPrice + amount);
-    };
     // --- Derived Top Card Modals Metrics --- 
     const marginTarget = 18.0; // Fixed Target %
     const marginAnalysisStats = React.useMemo(() => {
@@ -468,10 +716,10 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
         const adsRatio = totalSales > 0 ? ((TOTAL_AD_BUDGET || 0) / totalSales) * 100 : 0;
         const totalOps = PRODUCTS.reduce((sum, p) => sum + (p.shipping || 0) + (p.commission || 0) + (p.fixedCost || 0), 0);
         const opsRatio = totalSales > 0 ? (totalOps / totalSales) * 100 : 0;
-        
+
         const worstMargins = [...PRODUCTS]
             .filter(p => p.salesPrice > 0)
-            .sort((a,b) => a.margin - b.margin)
+            .sort((a, b) => a.margin - b.margin)
             .slice(0, 3)
             .map(p => ({
                 id: p.id,
@@ -552,11 +800,12 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
         });
     };
 
-    // Calculate Summary Totals
-    const totalVariableCosts = PRODUCTS.reduce((acc, p) => acc + (p.totalVariableCosts * p.unitsSold), 0);
-    const totalFixedCosts = PRODUCTS.reduce((acc, p) => acc + (p.fixedCost * p.unitsSold), 0);
-    const totalProfit = PRODUCTS.reduce((acc, p) => acc + (p.netProfit * p.unitsSold), 0);
-    const weightedMargin = totalSales > 0 ? (totalProfit / totalSales) * 100 : 0;
+    // Calculate Summary Totals strictly matching Dashboard
+    const macroNetProfit = totalSales - totalCOGS - TOTAL_AD_BUDGET - totalShipping - totalCommission - totalTax - totalFixedCost;
+    const totalVariableCosts = PRODUCTS.reduce((acc, p) => acc + p.totalVariableCosts, 0);
+    const totalFixedCosts = PRODUCTS.reduce((acc, p) => acc + p.fixedCost, 0);
+    const totalProfit = macroNetProfit;
+    const weightedMargin = totalSales !== 0 ? (macroNetProfit / totalSales) * 100 : 0;
 
     // Leaderboard Data Preparation
     // Trend Analysis Data Preparation
@@ -827,7 +1076,7 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                     </div>
                     <div className="flex items-center gap-1 mt-2 text-xs font-medium text-emerald-600">
                         {gaLoading ? (
-                             <span className="text-gray-400">Veriler getiriliyor...</span>
+                            <span className="text-gray-400">Veriler getiriliyor...</span>
                         ) : TOTAL_AD_BUDGET > 0 ? (
                             (totalSales / TOTAL_AD_BUDGET) >= 4 ? <span>Hedef (4.0x) üzerinde</span> : <span className="text-amber-600">Hedef (4.0x) altında</span>
                         ) : (
@@ -877,16 +1126,10 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
 
                         {/* 1. Summary Header - Status Bar */}
                         <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex flex-col md:flex-row justify-between items-center gap-4">
-                            {/* Total Revenue */}
-                            <div className="flex items-center gap-3">
-                                <div className="p-2 bg-indigo-50 border border-indigo-100 rounded-lg text-indigo-600 shadow-sm">
-                                    <Database className="w-5 h-5" />
-                                </div>
-                                <div>
-                                    <div className="text-xs font-semibold text-slate-400 uppercase tracking-widest">TOPLAM CİRO</div>
-                                    {/* UP5 Fix: Use compact format so large numbers don't overflow the fixed-width header */}
-                                    <div className="text-xl font-black text-slate-800 tracking-tight">{formatCompact(_sankeyRevenue)}</div>
-                                </div>
+                            {/* Diagram Title & Subtitle */}
+                            <div className="flex flex-col">
+                                <div className="text-[17px] font-black text-slate-800 tracking-tight">Kâr/Zarar Akış Diyagramı</div>
+                                <div className="text-[12px] font-medium text-slate-500 mt-1">Net cironun gider kalemlerine dağılımı ve net kâr dönüşüm haritası.</div>
                             </div>
 
                             {/* Distribution Progress Bar */}
@@ -925,9 +1168,7 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                         </div>
                                         <span className="text-xs font-bold uppercase tracking-wider text-indigo-900">CİRO</span>
                                     </div>
-                                    {/* UP5 Fix: Compact format to fit inside w-48 card */}
-                                    <div className="text-2xl font-black text-slate-900 mb-1 tracking-tight">{formatCompact(_sankeyRevenue)}</div>
-                                    <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">%100 Gelir</div>
+                                    <div className="text-2xl font-black text-slate-900 tracking-tight">{formatCompact(_sankeyRevenue)}</div>
                                 </div>
                             </div>
 
@@ -979,7 +1220,7 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
 
                                         // 1. Calculate Global Stack Geometry
                                         const totalStackHeight = allHeights.reduce((sum, h) => sum + h, 0);
-                                        const centerAnchorY = 200; // Vertical Center of the container
+                                        const centerAnchorY = 265; // Vertical Center of the container (530px / 2)
                                         const globalStartY = centerAnchorY - (totalStackHeight / 2);
 
                                         // 2. Determine THIS Ribbon's Start Position (Cumulative)
@@ -1022,7 +1263,7 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                                 i === 1 ? "grad-orange" :
                                                     i === 2 ? "grad-amber" :
                                                         i === 3 ? "grad-blue" :
-                                                            i === 4 ? "grad-purple" : 
+                                                            i === 4 ? "grad-purple" :
                                                                 i === 5 ? "grad-rose" :
                                                                     i === 6 ? "grad-slate" : "grad-emerald";
 
@@ -1339,9 +1580,9 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                                         {/* Current Profit - Green if positive, Red if negative */}
                                                         <div className={cn(
                                                             "text-xs font-bold mb-0.5",
-                                                            product.netProfit > 0 ? "text-emerald-600" : "text-red-600"
+                                                            product.actualNetProfit > 0 ? "text-emerald-600" : "text-red-600"
                                                         )}>
-                                                            {product.netProfit > 0 ? '+' : ''}₺{product.netProfit.toFixed(0)}
+                                                            {product.actualNetProfit > 0 ? '+' : ''}₺{product.actualNetProfit.toFixed(0)}
                                                         </div>
                                                         {/* Trend Change - Always Red for Losers */}
                                                         <div className="flex items-center gap-0.5 text-[10px] font-medium text-red-500 bg-red-50 px-1.5 py-0.5 rounded-full">
@@ -1389,7 +1630,6 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                 </div>
                                 <h3 className="font-bold text-slate-800 text-sm">AI Finansal Öngörüler</h3>
                             </div>
-                            <button className="text-xs text-indigo-600 font-medium hover:text-indigo-700">Tümünü Gör</button>
                         </div>
 
                         {/* Content */}
@@ -1413,21 +1653,25 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                     }
                                 };
 
-                                // UP9 Fix: Generate AI insights from real PRODUCTS data
-                                // 1. Opportunity: profitable product with lowest margin but positive trend
+                                // UP9 Fix: Generate AI insights from real PRODUCTS data (Analytical & Suggestive)
+
+                                // 1. Opportunity: profitable product with lowest margin
                                 const profitableProducts = PRODUCTS.filter(p => p.netProfit > 0 && p.margin > 0);
                                 const bestOpportunity = profitableProducts.length > 0
                                     ? [...profitableProducts].sort((a, b) => a.margin - b.margin)[0]
                                     : null;
+
                                 // 2. Critical: product with highest CPA-to-revenue ratio
-                                const worstCPA = [...PRODUCTS].sort((a, b) => (b.adSpend / (b.salesPrice || 1)) - (a.adSpend / (a.salesPrice || 1)))[0];
+                                const worstCPA = [...PRODUCTS].filter(p => p.adSpend > 0).sort((a, b) => (b.adSpend / Math.max(b.actualRevenue || 1, 1)) - (a.adSpend / Math.max(a.actualRevenue || 1, 1)))[0];
+
                                 // 3. Warning: product with highest stock (potential bloat)
                                 const mostStocked = [...PRODUCTS].filter(p => p.stock !== undefined).sort((a, b) => b.stock - a.stock)[0];
-                                const mostStockedDays = mostStocked ? Math.round(mostStocked.stock / Math.max(mostStocked.unitsSold / 30, 0.1)) : 60;
+
                                 // 4. Alert: product with worst (most negative) net profit
                                 const worstLoss = [...PRODUCTS].sort((a, b) => a.netProfit - b.netProfit)[0];
-                                // 5. Info: average shipping vs median
-                                const avgShipping = PRODUCTS.reduce((s, p) => s + (p.shipping || 0), 0) / Math.max(PRODUCTS.length, 1);
+
+                                // 5. Info: product with highest return amount
+                                const worstReturn = [...PRODUCTS].filter(p => p.returnAmt > 0).sort((a, b) => b.returnAmt - a.returnAmt)[0];
 
                                 const aiInsights = [
                                     bestOpportunity && {
@@ -1439,7 +1683,7 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                         productName: bestOpportunity.name,
                                         productId: bestOpportunity.id,
                                         data: { productName: bestOpportunity.name },
-                                        text: <span><strong>{bestOpportunity.name.split(' ').slice(0, 3).join(' ')}</strong> satıyor ama marj düşük (<strong>%{bestOpportunity.margin.toFixed(1)}</strong>). Fiyat stratejisini test ederek kârlılığı artırma fırsatı olabilir.</span>,
+                                        text: <span><strong>{bestOpportunity.name.split(' ').slice(0, 3).join(' ')}</strong> satış bandında istikrar yakalamış görünse de kâr marjı potansiyelinin gerisinde kalıyor. Satış hacmini kaybetmeden kârlılığı korumak adına ufak fiyat esneklik testleri (A/B) planlanabilir.</span>,
                                         action: 'Simüle Et'
                                     },
                                     worstCPA && {
@@ -1447,11 +1691,11 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                         type: 'critical',
                                         icon: AlertCircle,
                                         color: 'rose',
-                                        title: 'Reklam Bütçesi Uyarısı',
+                                        title: 'Reklam Algoritması Uyarısı',
                                         productName: worstCPA.name,
                                         productId: worstCPA.id,
-                                        data: { productName: worstCPA.name, cpa: Math.round(worstCPA.adSpend) },
-                                        text: <span><strong>{worstCPA.name.split(' ').slice(0, 3).join(' ')}</strong> için edinim maliyeti (<strong>₺{Math.round(worstCPA.adSpend)}</strong>) yüksek. Bütçeyi veya kampanyayı optimize edin.</span>,
+                                        data: { productName: worstCPA.name },
+                                        text: <span><strong>{worstCPA.name.split(' ').slice(0, 3).join(' ')}</strong> ürününün müşteri edinimi ve pazarlama giderleri, getirdiği ciroya oranla oldukça yoğun seviyede. Hedef kitle optimizasyonu veya kanal bazlı bütçe daraltması değerlendirilmeli.</span>,
                                         action: 'Reklamları Analiz Et'
                                     },
                                     mostStocked && {
@@ -1459,11 +1703,11 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                         type: 'warning',
                                         icon: Package,
                                         color: 'amber',
-                                        title: 'Stok Eritme Tavsiyesi',
+                                        title: 'Stok Devir Tavsiyesi',
                                         productName: mostStocked.name,
                                         productId: mostStocked.id,
-                                        data: { productName: mostStocked.name, days: mostStockedDays },
-                                        text: <span><strong>{mostStocked.name.split(' ').slice(0, 3).join(' ')}</strong> stoğu <strong>{mostStockedDays} günlük</strong> devir süresine sahip. Kampanya stratejileriyle nakit akışı hızlandırılabilir.</span>,
+                                        data: { productName: mostStocked.name },
+                                        text: <span><strong>{mostStocked.name.split(' ').slice(0, 3).join(' ')}</strong> stoğu mevcut satış hızına göre depoda normalden daha yavaş eriyor. Finansal yükü hafifletmek adına stok eritici kampanya veya çapraz satış (bundle) kurguları düşünülebilir.</span>,
                                         action: 'Kampanya Fikirleri'
                                     },
                                     worstLoss && worstLoss.netProfit < 0 && {
@@ -1471,24 +1715,24 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                         type: 'alert',
                                         icon: RefreshCw,
                                         color: 'purple',
-                                        title: 'Zarar Analizi',
+                                        title: 'Zarar Analizi Gerekli',
                                         productName: worstLoss.name,
                                         productId: worstLoss.id,
-                                        data: { productName: worstLoss.name, rate: Math.round(Math.abs(worstLoss.margin)) },
-                                        text: <span><strong>{worstLoss.name.split(' ').slice(0, 3).join(' ')}</strong> birim başına <strong>₺{Math.abs(worstLoss.netProfit).toFixed(0)}</strong> zararuğratıyor. Maliyet ya da fiyat stratejisi gözden geçirilmeli.</span>,
-                                        action: 'Analiz Et'
+                                        data: { productName: worstLoss.name },
+                                        text: <span><strong>{worstLoss.name.split(' ').slice(0, 3).join(' ')}</strong> kaleminde vergi, komisyon veya kargo düşüldükten sonra operasyonel net zararlar gözlemleniyor. Doğrudan maliyetlerin veya liste fiyatının acilen gözden geçirilmesi tavsiye edilir.</span>,
+                                        action: 'Maliyetleri Ayır'
                                     },
-                                    {
+                                    worstReturn && {
                                         id: 5,
                                         type: 'info',
-                                        icon: Truck,
+                                        icon: RefreshCcw,
                                         color: 'blue',
-                                        title: 'Kargo Maliyet Sapması',
-                                        productName: 'Genel',
-                                        productId: 'general',
-                                        data: {},
-                                        text: <span>Ortalama kargo maliyeti <strong>₺{avgShipping.toFixed(0)}</strong>. Kargo firmasıyla anlaşmayı yeniden müzakere edebilirsin.</span>,
-                                        action: 'Raporu İncele'
+                                        title: 'İade Kaybı Analizi',
+                                        productName: worstReturn.name,
+                                        productId: worstReturn.id,
+                                        data: { productName: worstReturn.name },
+                                        text: <span><strong>{worstReturn.name.split(' ').slice(0, 3).join(' ')}</strong> ürününde satıştan dönen iptal/iade kalemleri ortalamanın bir tık üzerinde seyrediyor. Ürün açıklamalarının veya kalite standartlarının güncellenmesi müşteri mennuniyetini artırabilir.</span>,
+                                        action: 'İade Tespiti'
                                     }
                                 ].filter(Boolean);
 
@@ -1561,10 +1805,10 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                         <thead className="relative z-20">
                             <tr className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-200">
                                 <th className="p-3 border-r border-gray-100" rowSpan="2">Ürün Detayı</th>
-                                <th className="p-2 text-center border-r border-gray-100 text-indigo-400" colSpan="3">GELİR</th>
-                                <th className="p-2 text-center border-r border-gray-100 text-rose-400" colSpan="2">İADE & KAYIP</th>
-                                <th className="p-2 text-center border-r border-gray-100 text-orange-400" colSpan="4">GİDERLER (BİRİM BAŞINA)</th>
-                                <th className="p-2 text-center text-emerald-600" colSpan="2">SONUÇ</th>
+                                <th className="p-2 text-center border-r border-gray-100 text-indigo-400" colSpan="1">SATIŞ</th>
+                                <th className="p-2 text-center border-r border-gray-100 text-orange-400" colSpan="6">BİRİM GİDERLER</th>
+                                <th className="p-2 text-center text-emerald-600" colSpan="2">BİRİM SONUÇ</th>
+                                {(activeChannel === 'all' || activeChannel === 'Tüm Kanallar') && <th className="p-3 text-center border-l border-gray-100 min-w-[50px] transition-all bg-gray-50 z-30" rowSpan="2">KANALLAR</th>}
                             </tr>
 
                             <tr className="bg-white text-[10px] font-bold text-gray-500 uppercase border-b border-gray-200 leading-tight">
@@ -1573,61 +1817,71 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                     <span className="border-b border-dotted border-gray-300">Satış Fiyatı</span>
                                     <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-32 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-center normal-case pointer-events-none">
                                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 border-4 border-transparent border-b-gray-900"></div>
-                                        KDV dahil liste satış fiyatı.
+                                        KDV dahil birim liste satış fiyatı.
                                     </div>
                                 </th>
-
-                                <th className="p-3 text-center border-r border-gray-50">Satış<br />Adedi</th>
-                                <th className="p-3 text-right border-r border-gray-100 min-w-[90px]">Satış<br />Tutarı</th>
-
-                                <th className="p-3 text-center border-r border-gray-50 text-rose-300">İade<br />Adedi</th>
-                                <th className="p-3 text-right border-r border-gray-100 text-rose-300">İade<br />Tutarı</th>
 
                                 <th className="p-3 text-right border-r border-gray-50 text-gray-400 relative group cursor-help">
                                     <span className="border-b border-dotted border-gray-300">Maliyet/SMM</span>
                                     <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-40 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-center normal-case pointer-events-none">
                                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 border-4 border-transparent border-b-gray-900"></div>
-                                        Satılan Malın Maliyeti (Ürün Alış/Üretim fiyatı).
+                                        Satılan bir malın brüt geliş veya üretim maliyeti.
                                     </div>
                                 </th>
 
                                 <th className="p-3 text-right border-r border-gray-50 text-gray-400 relative group cursor-help">
-                                    <span className="border-b border-dotted border-gray-300">Değ. Giderler</span>
-                                    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-40 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-center normal-case pointer-events-none">
+                                    <span className="border-b border-dotted border-gray-300">Kargo & Pkt.</span>
+                                    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-48 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-left normal-case pointer-events-none">
                                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 border-4 border-transparent border-b-gray-900"></div>
-                                        Kargo, paketleme, komisyon ve ödeme altyapı bedelleri.
+                                        Lojistik ve koli maliyeti.
+                                    </div>
+                                </th>
+
+                                <th className="p-3 text-right border-r border-gray-50 text-gray-400 relative group cursor-help">
+                                    <span className="border-b border-dotted border-gray-300">Komisyon</span>
+                                    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-48 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-left normal-case pointer-events-none">
+                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 border-4 border-transparent border-b-gray-900"></div>
+                                        Pazaryeri ve altyapı(ödeme) komisyonları.
+                                    </div>
+                                </th>
+
+                                <th className="p-3 text-right border-r border-gray-50 text-gray-400 relative group cursor-help">
+                                    <span className="border-b border-dotted border-gray-300">Şirket Gider Payı</span>
+                                    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-48 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-left normal-case pointer-events-none">
+                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 border-4 border-transparent border-b-gray-900"></div>
+                                        Son 3 aylık kira, maaş, yazılım gibi genel giderlerin satılan adet başına payı.
                                     </div>
                                 </th>
 
                                 <th className="p-3 text-right border-r border-gray-50 text-orange-400 relative group cursor-help">
-                                    <span className="border-b border-dotted border-orange-300">Reklam Payı (Ort.)</span>
+                                    <span className="border-b border-dotted border-orange-300">Reklam (CPA)</span>
                                     <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-40 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-center normal-case pointer-events-none">
                                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 border-4 border-transparent border-b-gray-900"></div>
-                                        Bu ürünü satmak için harcanan ortalama reklam bütçesi (CPA).
+                                        1 adet satışı getirmek için harcanan ortalama pazarlama bütçesi.
                                     </div>
                                 </th>
 
                                 <th className="p-3 text-right border-r border-gray-100 text-gray-400 relative group cursor-help">
-                                    <span className="border-b border-dotted border-gray-300">Genel Gider</span>
-                                    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-40 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-center normal-case pointer-events-none">
-                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 border-4 border-transparent border-b-gray-900"></div>
-                                        Kira, maaş ve yazılım gibi sabit giderlerden bu ürüne düşen pay.
+                                    <span className="border-b border-dotted border-gray-300">Vergi (KDV)</span>
+                                    <div className="absolute top-full right-0 mt-2 w-40 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-center normal-case pointer-events-none">
+                                        <div className="absolute bottom-full right-4 border-4 border-transparent border-b-gray-900"></div>
+                                        Devlete ödenecek tahmini net KDV yükü.
                                     </div>
                                 </th>
 
                                 <th className="p-3 text-right bg-emerald-50/30 text-emerald-600 min-w-[90px] relative group cursor-help">
-                                    <span className="border-b border-dotted border-emerald-300">NET KAR</span>
-                                    <div className="absolute top-full right-0 mt-2 w-40 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-center normal-case pointer-events-none">
+                                    <span className="border-b border-dotted border-emerald-300">BİRİM NET KÂR</span>
+                                    <div className="absolute top-full right-0 mt-2 w-48 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-center normal-case pointer-events-none">
                                         <div className="absolute bottom-full right-4 border-4 border-transparent border-b-gray-900"></div>
-                                        Cirodan iadeler ve tüm giderler düşüldükten sonra kalan net tutar.
+                                        1 üründen doğrudan ürün bazlı tüm kesintiler (Opr., CPA, KDV vb.) düşüldükten sonra cebe kalan net tutar.
                                     </div>
                                 </th>
 
                                 <th className="p-3 text-center text-gray-400 relative group cursor-help">
-                                    <span className="border-b border-dotted border-gray-300">%</span>
+                                    <span className="border-b border-dotted border-gray-300">Marj (%)</span>
                                     <div className="absolute top-full right-0 mt-2 w-32 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-center normal-case pointer-events-none">
                                         <div className="absolute bottom-full right-2 border-4 border-transparent border-b-gray-900"></div>
-                                        Net Kâr / Net Ciro oranı (Net Marj).
+                                        Birim Net Kâr / Satış Fiyatı oranı.
                                     </div>
                                 </th>
                             </tr>
@@ -1635,9 +1889,9 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
 
                         <tbody id="table-body" className="text-xs text-gray-600 divide-y divide-gray-50">
                             {currentRows.map((item) => {
-                                // Use pre-calculated fields from mock generator
                                 return (
-                                    <tr key={item.id} onClick={() => openProductDetail(item)} className="hover:bg-gray-50 transition-colors group cursor-pointer">
+                                    <React.Fragment key={item.id}>
+                                    <tr className="hover:bg-gray-50 transition-colors group border-b border-gray-50">
                                         <td className="p-3 border-r border-gray-50">
                                             {/* Left side: Product Image and Names */}
                                             <div className="flex items-center gap-3 w-72 shrink-0 pr-4">
@@ -1663,43 +1917,109 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                                 </div>
                                             </div>
                                         </td>
-                                        <td className="p-3 text-right border-r border-gray-50 text-gray-400">{formatCurrency(item.price)}</td>
-                                        <td className="p-3 text-center border-r border-gray-50 font-bold text-gray-800">{formatNumber(item.sold)}</td>
-                                        <td className="p-3 text-right border-r border-gray-100 font-bold text-indigo-600">{formatCurrency(item.revenue)}</td>
-                                        <td className="p-3 text-center border-r border-gray-50 text-rose-400">{formatNumber(item.returns)}</td>
-                                        <td className="p-3 text-right border-r border-gray-100 text-rose-500">-{formatCurrency(item.returnAmt)}</td>
-                                        <td className="p-3 text-right border-r border-gray-50 text-rose-600">{formatCurrency(item.cogs)}</td>
-                                        <td className="p-3 text-right border-r border-gray-50 text-rose-400">{formatCurrency(item.variableCosts)}</td>
-                                        <td className="p-3 text-right border-r border-gray-50 text-orange-600 font-bold">{formatCurrency(item.ads)}</td>
-                                        <td className="p-3 text-right border-r border-gray-100 text-rose-400">{formatCurrency(item.fixed)}</td>
-                                        <td className={cn("p-3 text-right font-bold", item.netProfitTotal >= 0 ? "bg-emerald-50/50 text-emerald-600" : "bg-rose-50/50 text-rose-600")}>
-                                            {formatCurrency(item.netProfitTotal)}
+                                        <td className="p-3 text-right border-r border-gray-50">
+                                            <div className="text-indigo-600 font-bold">{formatCurrency(item.price)}</div>
+                                            {item.bufferPrice > 0 && (
+                                                <div
+                                                    className={cn(
+                                                        "text-[9.5px] mt-1 px-1.5 py-0.5 rounded font-medium inline-block relative group/tampon cursor-help",
+                                                        item.price >= item.bufferPrice ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-rose-50 text-rose-600 border border-rose-100"
+                                                    )}
+                                                >
+                                                    Min: {formatCurrency(item.bufferPrice)}
+                                                    <div className="absolute top-full right-0 mt-1.5 w-48 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover/tampon:opacity-100 group-hover/tampon:visible transition-all z-[100] text-right pointer-events-none">
+                                                        <div className="absolute bottom-full right-4 border-4 border-transparent border-b-gray-900"></div>
+                                                        Tüm sabit ve değişken giderler düşüldüğünde Zarar etmemek için satılması gereken <strong>Tampon Fiyat</strong>.
+                                                    </div>
+                                                </div>
+                                            )}
                                         </td>
-                                        <td className="p-3 text-center text-gray-400">{item.margin.toFixed(1)}%</td>
+                                        <td className="p-3 text-right border-r border-gray-50 text-rose-600">{formatCurrency(item.cogs)}</td>
+
+                                        <td className="p-3 text-right border-r border-gray-50 text-gray-500">{formatCurrency(item.shipping)}</td>
+                                        <td className="p-3 text-right border-r border-gray-50 text-gray-500">{formatCurrency(item.commission)}</td>
+                                        <td className="p-3 text-right border-r border-gray-50 text-gray-500">{formatCurrency(item.fixedCost)}</td>
+
+                                        <td className="p-3 text-right border-r border-gray-50 text-orange-600 font-bold">{formatCurrency(item.ads)}</td>
+                                        <td className="p-3 text-right border-r border-gray-100 text-rose-400">{formatCurrency(item.tax)}</td>
+                                        <td className={cn("p-3 text-right font-bold", item.unitNetProfit >= 0 ? "bg-emerald-50/50 text-emerald-600" : "bg-rose-50/50 text-rose-600")}>
+                                            {formatCurrency(item.unitNetProfit)}
+                                        </td>
+                                        <td className="p-3 text-center text-gray-400 font-medium">{item.margin.toFixed(1)}%</td>
+                                        {(activeChannel === 'all' || activeChannel === 'Tüm Kanallar') && (
+                                            <td className="p-3 text-center border-l border-gray-50 border-r-0">
+                                                {item.trendyolMetrics ? (
+                                                    <button
+                                                        onClick={(e) => toggleRow(item.id, e)}
+                                                        className="w-8 h-8 rounded-full border border-gray-200 flex items-center justify-center hover:bg-gray-100 transition-colors mx-auto"
+                                                    >
+                                                        <ChevronDown className={cn("w-4 h-4 text-gray-500 transition-transform", expandedRows.has(item.id) ? "rotate-180" : "")} />
+                                                    </button>
+                                                ) : (
+                                                    <div className="w-8 h-8 rounded-full border border-dashed border-gray-200 flex items-center justify-center mx-auto opacity-50 cursor-not-allowed">
+                                                        <div className="w-1.5 h-1.5 rounded-full bg-gray-300"></div>
+                                                    </div>
+                                                )}
+                                            </td>
+                                        )}
                                     </tr>
+                                    {/* Trendyol Nested Row */}
+                                    {(activeChannel === 'all' || activeChannel === 'Tüm Kanallar') && expandedRows.has(item.id) && item.trendyolMetrics && (
+                                        <tr className="bg-gradient-to-r from-orange-50/40 via-white to-white border-b border-gray-50 text-[11px] hover:bg-orange-50/60 transition-all duration-300 ease-in-out">
+                                            <td className="p-3 border-r border-gray-50 pl-6 relative">
+                                                {/* Tree Connector Line */}
+                                                <div className="absolute top-0 left-6 w-px h-1/2 bg-gray-200"></div>
+                                                <div className="absolute top-1/2 left-6 w-6 h-px bg-gray-200"></div>
+                                                
+                                                <div className="flex items-center gap-2.5 ml-8">
+                                                    <div className="w-10 h-10 rounded-md overflow-hidden bg-[#F27A1A] flex items-center justify-center shrink-0 border border-gray-100 shadow-[0_2px_8px_rgba(242,122,26,0.2)]">
+                                                        <svg width="100%" height="100%" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                            <rect width="100" height="100" fill="#F27A1A" />
+                                                            <rect y="32" width="100" height="36" fill="#111111" />
+                                                            <text x="50" y="53" fontFamily="Arial, Helvetica, sans-serif" fontWeight="800" fontSize="21" fill="#FFFFFF" textAnchor="middle" dominantBaseline="middle" letterSpacing="-1">trendyol</text>
+                                                        </svg>
+                                                    </div>
+                                                    <div className="flex flex-col justify-center">
+                                                        <span className="font-bold text-gray-800 tracking-wide text-[11px]">Trendyol</span>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td className="p-3 text-right border-r border-gray-50">
+                                                <div className="text-[#F27A1A] font-bold">{formatCurrency(item.trendyolMetrics.price)}</div>
+                                                {item.trendyolMetrics.bufferPrice > 0 && (
+                                                    <div
+                                                        className={cn(
+                                                            "text-[9.5px] mt-1 px-1.5 py-0.5 rounded font-medium inline-block relative group/tamponTy cursor-help",
+                                                            item.trendyolMetrics.price >= item.trendyolMetrics.bufferPrice ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-rose-50 text-rose-600 border border-rose-100"
+                                                        )}
+                                                    >
+                                                        Min: {formatCurrency(item.trendyolMetrics.bufferPrice)}
+                                                        <div className="absolute top-full right-0 mt-1.5 w-48 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover/tamponTy:opacity-100 group-hover/tamponTy:visible transition-all z-[100] text-right pointer-events-none">
+                                                            <div className="absolute bottom-full right-4 border-4 border-transparent border-b-gray-900"></div>
+                                                            Trendyol komisyonu (%15) ve KDV'ye göre uyarlanmış başabaş (zarar etmeme) sınırı.
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </td>
+                                            <td className="p-3 text-right border-r border-gray-50 text-rose-500/70 font-medium">{formatCurrency(item.trendyolMetrics.cogs)}</td>
+                                            <td className="p-3 text-right border-r border-gray-50 text-gray-400 font-medium">{formatCurrency(item.trendyolMetrics.shipping)}</td>
+                                            <td className="p-3 text-right border-r border-gray-50 text-gray-400 font-medium">{formatCurrency(item.trendyolMetrics.commission)}</td>
+                                            <td className="p-3 text-right border-r border-gray-50 text-gray-400 font-medium">{formatCurrency(item.trendyolMetrics.fixedCost)}</td>
+                                            <td className="p-3 text-right border-r border-gray-50 text-[#F27A1A] font-medium">{formatCurrency(item.trendyolMetrics.ads)}</td>
+                                            <td className="p-3 text-right border-r border-gray-50 text-rose-400/70 font-medium">{formatCurrency(item.trendyolMetrics.tax)}</td>
+                                            <td className={cn("p-3 text-right font-extrabold w-24 border-r border-gray-50", item.trendyolMetrics.unitNetProfit >= 0 ? "bg-emerald-50/40 text-emerald-600" : "bg-rose-50/40 text-rose-600")}>
+                                                {formatCurrency(item.trendyolMetrics.unitNetProfit)}
+                                            </td>
+                                            <td className={cn("p-3 text-center font-bold tracking-tight", item.trendyolMetrics.unitNetProfit >= 0 ? "text-emerald-600" : "text-rose-500")}>
+                                                {item.trendyolMetrics.price > 0 ? ((item.trendyolMetrics.unitNetProfit / item.trendyolMetrics.price) * 100).toFixed(1) : 0}%
+                                            </td>
+                                            <td className="p-3 border-l border-gray-50 border-r-0"></td>
+                                        </tr>
+                                    )}
+                                    </React.Fragment>
                                 );
                             })}
                         </tbody>
-
-                        <tfoot className="bg-gray-50 border-t-2 border-gray-100 font-bold text-xs text-gray-700 sticky bottom-0 z-10 shadow-[0_-5px_15px_-5px_rgba(0,0,0,0.1)]">
-                            <tr>
-                                <td className="p-4 text-right">GENEL TOPLAM</td>
-                                <td className="p-4 text-right text-gray-400">-</td>
-                                <td className="p-4 text-center text-indigo-600" id="total-qty">{formatNumber(totalQty)} Adet</td>
-                                <td className="p-4 text-right text-indigo-700" id="total-revenue">{formatCurrency(totalRevenue)}</td>
-                                <td className="p-4 text-center text-rose-600" id="total-return-qty">{formatNumber(totalReturnQty)}</td>
-                                <td className="p-4 text-right text-rose-600" id="total-return-amt">-{formatCurrency(totalReturnAmt)}</td>
-                                <td colSpan="4" className="p-4 text-center text-gray-400 text-[10px] font-normal tracking-wide">
-                                    Genel Ort. Marj: <span className={cn("font-bold", avgMargin >= 0 ? "text-emerald-600" : "text-rose-600")}>
-                                        %{avgMargin.toFixed(1)}
-                                    </span>
-                                </td>
-                                <td className={cn("p-4 text-right text-sm", totalNetProfit >= 0 ? "text-emerald-700" : "text-rose-700")} id="total-profit">
-                                    {formatCurrency(totalNetProfit)}
-                                </td>
-                                <td className="p-4"></td>
-                            </tr>
-                        </tfoot>
                     </table>
                 </div>
 
@@ -1814,7 +2134,10 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                             : "border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50"
                                     )}
                                 >
-                                    🚀 Yükselenler
+                                    <div className="flex items-center justify-center gap-2">
+                                        <TrendingUp className="w-4 h-4" />
+                                        <span>Yükselenler</span>
+                                    </div>
                                 </button>
                                 <button
                                     onClick={() => setTrendModalTab('losers')}
@@ -1825,7 +2148,10 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                             : "border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50"
                                     )}
                                 >
-                                    🔻 Düşenler
+                                    <div className="flex items-center justify-center gap-2">
+                                        <TrendingUp className="w-4 h-4 rotate-180" />
+                                        <span>Düşenler</span>
+                                    </div>
                                 </button>
                             </div>
 
@@ -1850,9 +2176,7 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                                 </>
                                             )}
                                             <th className="p-3 border-b border-gray-100 text-right">Değişim (%)</th>
-                                            {trendModalTab === 'losers' && (
-                                                <th className="p-3 border-b border-gray-100 text-right w-40">Analiz & Öneri</th>
-                                            )}
+
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-50 text-sm md:text-base">
@@ -1873,7 +2197,7 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                             .map((product, index) => {
                                                 // Dynamic Values
                                                 const isProfit = modalMetric === 'profit';
-                                                const currentVal = isProfit ? product.netProfit : product.unitsSold;
+                                                const currentVal = isProfit ? product.actualNetProfit : product.unitsSold;
                                                 const lastVal = isProfit ? product.lastMonthProfit : product.lastMonthUnits;
                                                 const changeVal = isProfit ? product.trendValue : product.trendUnits;
                                                 const changePct = isProfit ? product.trendPercent : product.trendUnitsPercent;
@@ -1914,54 +2238,7 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                                             {isPositive ? '+' : ''}{changePct.toFixed(1)}%
                                                         </td>
 
-                                                        {/* Analysis Cell for Losers */}
-                                                        {trendModalTab === 'losers' && (
-                                                            <td className="p-3 text-right align-middle">
-                                                                {product.diagnosis ? (
-                                                                    <div className="flex flex-col items-end gap-2">
-                                                                        <span className={cn(
-                                                                            "text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-full inline-block",
-                                                                            product.diagnosis.type === 'high_cpa' ? "bg-red-50 text-red-600" :
-                                                                                product.diagnosis.type === 'low_margin' ? "bg-amber-50 text-amber-600" :
-                                                                                    product.diagnosis.type === 'volume_drop' ? "bg-blue-50 text-blue-600" :
-                                                                                        "bg-gray-50 text-gray-500"
-                                                                        )}>
-                                                                            {product.diagnosis.badge}
-                                                                        </span>
-                                                                        <button
-                                                                            onClick={() => handleAIConsultation(product, product.diagnosis.type)}
-                                                                            title={product.diagnosis.actionTooltip}
-                                                                            className={cn(
-                                                                                "group flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-200 shadow-sm text-xs font-medium text-gray-700 bg-white transition-all",
-                                                                                product.diagnosis.actionColor === 'red' ? "hover:text-red-600 hover:border-red-300 hover:bg-red-50" :
-                                                                                    product.diagnosis.actionColor === 'amber' ? "hover:text-amber-600 hover:border-amber-300 hover:bg-amber-50" :
-                                                                                        product.diagnosis.actionColor === 'blue' ? "hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50" :
-                                                                                            "hover:text-gray-900 hover:border-gray-300 hover:bg-gray-50"
-                                                                            )}
-                                                                        >
-                                                                            {/* Default Icon */}
-                                                                            {product.diagnosis.actionIcon && <product.diagnosis.actionIcon className={cn(
-                                                                                "w-3.5 h-3.5 text-gray-400 transition-colors group-hover:hidden",
-                                                                            )} />}
 
-                                                                            {/* AI Sparkles Icon (Visible on Hover) */}
-                                                                            <Sparkles className={cn(
-                                                                                "w-3.5 h-3.5 hidden group-hover:block transition-colors",
-                                                                                product.diagnosis.actionColor === 'red' ? "text-red-500" :
-                                                                                    product.diagnosis.actionColor === 'amber' ? "text-amber-500" :
-                                                                                        product.diagnosis.actionColor === 'blue' ? "text-blue-500" :
-                                                                                            "text-gray-600"
-                                                                            )} />
-
-                                                                            <span className="group-hover:hidden">{product.diagnosis.actionLabel}</span>
-                                                                            <span className="hidden group-hover:inline">AI ile Çöz</span>
-                                                                        </button>
-                                                                    </div>
-                                                                ) : (
-                                                                    <span className="text-gray-300 text-xs">-</span>
-                                                                )}
-                                                            </td>
-                                                        )}
                                                     </tr>
                                                 );
                                             })}
@@ -2038,7 +2315,7 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                             <span className="text-sm font-medium text-gray-500">Hedef: <span className="text-gray-900 font-bold">%{marginTarget.toFixed(1)}</span></span>
                                             <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded border flex items-center gap-1", marginAnalysisStats.netProfitRatio >= marginTarget ? "bg-emerald-50 text-emerald-700 border-emerald-100" : "bg-rose-50 text-rose-700 border-rose-100")}>
                                                 {marginAnalysisStats.netProfitRatio >= marginTarget ? (
-                                                     <TrendingUp className="w-3 h-3" />
+                                                    <TrendingUp className="w-3 h-3" />
                                                 ) : (
                                                     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"></path></svg>
                                                 )}
@@ -2179,7 +2456,7 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                         <tbody className="divide-y divide-gray-100">
                                             {lossProductsStats.count === 0 ? (
                                                 <tr>
-                                                     <td colSpan="4" className="px-6 py-12 text-center text-gray-500 font-medium">Tebrikler, bu dönemde net zarar eden bir ürününüz bulunmuyor.</td>
+                                                    <td colSpan="4" className="px-6 py-12 text-center text-gray-500 font-medium">Tebrikler, bu dönemde net zarar eden bir ürününüz bulunmuyor.</td>
                                                 </tr>
                                             ) : (
                                                 lossProductsStats.items.map(p => (
@@ -2194,7 +2471,7 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                                             </div>
                                                         </td>
                                                         <td className="px-6 py-4 text-center font-medium text-gray-600">{formatNumber(p.unitsSold)} Adet</td>
-                                                        <td className="px-6 py-4 text-right text-rose-500 font-medium whitespace-nowrap">-₺{Math.abs(p.netProfit).toLocaleString('tr-TR', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                                                        <td className="px-6 py-4 text-right text-rose-500 font-medium whitespace-nowrap">-₺{Math.abs(p.netProfit).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                                                         <td className="px-6 py-4 text-right whitespace-nowrap"><span className="font-bold text-rose-700">-₺{formatNumber(Math.abs(p.netProfitTotal))}</span></td>
                                                     </tr>
                                                 ))
@@ -2241,13 +2518,13 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                     <div className="flex justify-between items-end"><h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Kanal Bazlı Performans (Sadece API Akışı)</h4></div>
                                     {ga?.channels && Object.entries(ga.channels).map(([key, data]) => {
                                         if (data.cost <= 0 && data.revenue <= 0) return null;
-                                        
-                                        const title = key === 'googleAds' ? 'Google Ads (Search & Display)' : 
-                                                      key === 'metaAds' ? 'Meta (FB/IG)' : 'Diğer Kanallar';
-                                        
-                                        const color = key === 'googleAds' ? 'emerald' : 
-                                                      key === 'metaAds' ? 'orange' : 'blue';
-                                                      
+
+                                        const title = key === 'googleAds' ? 'Google Ads (Search & Display)' :
+                                            key === 'metaAds' ? 'Meta (FB/IG)' : 'Diğer Kanallar';
+
+                                        const color = key === 'googleAds' ? 'emerald' :
+                                            key === 'metaAds' ? 'orange' : 'blue';
+
                                         const roas = data.cost > 0 ? (data.revenue / data.cost) : 0;
                                         // Approximate split for visual bar based on channel share of total revenue
                                         const share = totalSales > 0 ? (data.revenue / totalSales) * 100 : 0;
@@ -2332,302 +2609,7 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                     </div>
                 )
             }
-            {/* Ultimate Product Detail Cockpit Modal */}
-            {
-                isDetailModalOpen && selectedProduct && (
-                    <div id="product-detail-modal" className="fixed inset-0 z-[9999] overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
-                        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md transition-opacity" onClick={closeProductDetail}></div>
 
-                        <div className="flex min-h-full items-center justify-center p-4">
-                            <div className="relative transform overflow-hidden rounded-2xl bg-white text-left shadow-2xl transition-all w-full max-w-5xl">
-
-                                <div className="bg-white px-6 py-4 border-b border-gray-100 flex justify-between items-center sticky top-0 z-10">
-                                    <div className="flex gap-4 items-center">
-                                        <img
-                                            id="modal-img"
-                                            src={selectedProduct.img || getFallbackProductImage(selectedProduct.name)}
-                                            className="w-14 h-14 rounded-lg border border-gray-100 object-cover"
-                                            alt={selectedProduct.name}
-                                            onError={(e) => {
-                                                e.target.onerror = null;
-                                                e.target.src = getFallbackProductImage(selectedProduct.name);
-                                            }}
-                                        />
-                                        <div>
-                                            <h3 id="modal-name" className="text-lg font-bold text-gray-900">{selectedProduct.name}</h3>
-                                            <div className="flex items-center gap-2 text-xs mt-0.5">
-                                                <span id="modal-sku" className="font-mono text-gray-500 bg-gray-50 px-1.5 rounded">{selectedProduct.sku}</span>
-                                                <span id="modal-badge" className={cn("px-2 py-0.5 rounded font-bold", selectedProduct.netProfit > 0 ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700")}>
-                                                    {selectedProduct.netProfit > 0 ? "KARLI" : "ZARAR"}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-6">
-                                        <div className="text-right">
-                                            <p className="text-[10px] text-gray-400 font-bold uppercase">Satış Fiyatı</p>
-                                            <p id="modal-price" className="text-xl font-bold text-gray-900">{formatCurrency(selectedProduct.price)}</p>
-                                        </div>
-                                        <button onClick={closeProductDetail} className="bg-gray-100 hover:bg-gray-200 text-gray-500 p-2 rounded-full transition-colors">
-                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                                        </button>
-                                    </div>
-                                </div>
-
-                                <div className="bg-gray-50/50 p-6 overflow-y-auto max-h-[85vh]">
-
-                                    {/* KPI Ribbon */}
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                                        {/* Stock Card */}
-                                        <div className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm flex items-center gap-3 relative overflow-hidden group">
-                                            <div className="absolute right-0 top-0 bottom-0 w-1 bg-blue-500"></div>
-                                            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
-                                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path></svg>
-                                            </div>
-                                            <div>
-                                                <p className="text-[10px] font-bold text-gray-400 uppercase">Stok Durumu</p>
-                                                <div className="flex items-baseline gap-1">
-                                                    <span className="text-lg font-bold text-gray-900">{selectedProduct.sold * 2 + 15}</span>
-                                                    <span className="text-xs text-gray-500">Adet</span>
-                                                </div>
-                                                <p className="text-[10px] text-orange-500 font-medium mt-0.5">⚠️ 14 Günlük stok kaldı</p>
-                                            </div>
-                                        </div>
-
-                                        {/* Marketing Card */}
-                                        <div className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm flex items-center gap-3 relative overflow-hidden">
-                                            <div className="absolute right-0 top-0 bottom-0 w-1 bg-purple-500"></div>
-                                            <div className="p-2 bg-purple-50 text-purple-600 rounded-lg">
-                                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z"></path></svg>
-                                            </div>
-                                            <div>
-                                                <p className="text-[10px] font-bold text-gray-400 uppercase">Pazarlama (ROAS)</p>
-                                                <div className="flex items-baseline gap-1">
-                                                    <span className="text-lg font-bold text-gray-900">{(selectedProduct.revenue / (selectedProduct.ads * selectedProduct.sold)).toFixed(1)}x</span>
-                                                </div>
-                                                <p className="text-[10px] text-gray-500 font-medium mt-0.5">Dönüşüm Oranı: %{(Math.random() * 2 + 1).toFixed(1)}</p>
-                                            </div>
-                                        </div>
-
-                                        {/* Customer Score Card */}
-                                        <div className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm flex items-center gap-3 relative overflow-hidden">
-                                            <div className="absolute right-0 top-0 bottom-0 w-1 bg-yellow-400"></div>
-                                            <div className="p-2 bg-yellow-50 text-yellow-600 rounded-lg">
-                                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path></svg>
-                                            </div>
-                                            <div>
-                                                <p className="text-[10px] font-bold text-gray-400 uppercase">Müşteri Skoru</p>
-                                                <div className="flex items-baseline gap-1">
-                                                    <span className="text-lg font-bold text-gray-900">{(4 + Math.random()).toFixed(1)}</span>
-                                                    <span className="text-xs text-gray-400">/ 5.0</span>
-                                                </div>
-                                                <p className="text-[10px] text-gray-500 font-medium mt-0.5">İade Oranı: %{((selectedProduct.returns / selectedProduct.sold) * 100).toFixed(1)}</p>
-                                            </div>
-                                        </div>
-
-                                        {/* Profit Card */}
-                                        <div className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm flex items-center gap-3 relative overflow-hidden">
-                                            <div className="absolute right-0 top-0 bottom-0 w-1 bg-emerald-500"></div>
-                                            <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
-                                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                            </div>
-                                            <div>
-                                                <p className="text-[10px] font-bold text-gray-400 uppercase">Net Kâr (Birim)</p>
-                                                <div className="flex items-baseline gap-1">
-                                                    <span className={cn("text-lg font-bold", selectedProduct.netProfit > 0 ? "text-emerald-600" : "text-rose-600")}>
-                                                        {formatCurrency(selectedProduct.netProfit)}
-                                                    </span>
-                                                </div>
-                                                <p className={cn("text-[10px] font-bold mt-0.5", selectedProduct.margin > 0 ? "text-emerald-600" : "text-rose-600")}>
-                                                    %{selectedProduct.margin.toFixed(1)} Marj
-                                                </p>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-12 gap-6">
-
-                                        <div className="col-span-12 lg:col-span-8 space-y-6">
-
-                                            {/* Trend Chart */}
-                                            <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                                                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4">6 Aylık Trend (Satış Adedi vs Marj)</h4>
-                                                <div className="h-48 w-full bg-slate-50 flex items-center justify-center rounded-lg border border-dashed border-gray-300">
-                                                    <p className="text-xs text-gray-400">Trend Chart Disabled</p>
-                                                    {/* AreaChart disabled for debugging
-                                                <ResponsiveContainer width="100%" height="100%">
-                                                    <AreaChart data={[
-                                                        { month: 'Ağu', sales: 40, margin: 15 },
-                                                        { month: 'Eyl', sales: 55, margin: 18 },
-                                                        { month: 'Ekim', sales: 45, margin: 14 },
-                                                        { month: 'Kas', sales: 70, margin: 22 },
-                                                        { month: 'Ara', sales: 90, margin: 25 },
-                                                        { month: 'Ocak', sales: selectedProduct.sold, margin: selectedProduct.margin }
-                                                    ]}>
-                                                        <defs>
-                                                            <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
-                                                                <stop offset="5%" stopColor="#c7d2fe" stopOpacity={0.8} />
-                                                                <stop offset="95%" stopColor="#c7d2fe" stopOpacity={0} />
-                                                            </linearGradient>
-                                                        </defs>
-                                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                                                        <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9ca3af' }} />
-                                                        <Tooltip
-                                                            contentStyle={{ backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #e5e7eb', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
-                                                            itemStyle={{ fontSize: '12px', fontWeight: 600 }}
-                                                            formatter={(value, name) => [name === 'margin' ? `%${value}` : value, name === 'margin' ? 'Net Marj' : 'Satış']}
-                                                        />
-                                                        <Area type="monotone" dataKey="sales" stroke="#6366f1" fillOpacity={1} fill="url(#colorSales)" strokeWidth={2} name="sales" />
-                                                        <Line type="monotone" dataKey="margin" stroke="#10b981" strokeWidth={3} dot={{ r: 4, strokeWidth: 2, fill: '#fff' }} name="margin" />
-                                                    </AreaChart>
-                                                </ResponsiveContainer>
-                                                */}
-                                                </div>
-                                            </div>
-
-                                            <div className="grid grid-cols-2 gap-6">
-                                                {/* Cost Breakdown */}
-                                                <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                                                    <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Maliyet Dağılımı</h4>
-
-                                                    {/* Visual Bar */}
-                                                    <div className="h-6 w-full rounded-full overflow-hidden flex text-[9px] font-bold text-white leading-6 text-center shadow-inner">
-                                                        <div className="bg-gray-400" style={{ width: '40%' }}>SMM</div>
-                                                        <div className="bg-orange-400" style={{ width: '20%' }}>ADS</div>
-                                                        <div className="bg-blue-400" style={{ width: '15%' }}>OPS</div>
-                                                        <div className="bg-emerald-500 flex-grow">NET</div>
-                                                    </div>
-
-                                                    <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-[10px] text-gray-500">
-                                                        <div className="flex justify-between items-center"><span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-gray-400"></div>Üretim</span> <span className="font-bold text-gray-900">{formatCurrency(selectedProduct.cogs)}</span></div>
-                                                        <div className="flex justify-between items-center"><span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-orange-400"></div>Reklam</span> <span className="font-bold text-gray-900">{formatCurrency(selectedProduct.ads)}</span></div>
-                                                        <div className="flex justify-between items-center"><span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-blue-400"></div>Operasyon</span> <span className="font-bold text-gray-900">{formatCurrency(selectedProduct.variableCosts + selectedProduct.fixed)}</span></div>
-                                                        <div className="flex justify-between items-center"><span className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>Net Kâr</span> <span className="font-bold text-gray-900">{formatCurrency(selectedProduct.netProfit)}</span></div>
-                                                    </div>
-                                                </div>
-
-                                                {/* Diagnostics */}
-                                                <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                                                    <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">İade Nedenleri</h4>
-                                                    <div className="space-y-3">
-                                                        <div className="flex items-center justify-between text-xs">
-                                                            <span className="text-gray-600">Beden Uyumsuzluğu</span>
-                                                            <div className="flex items-center gap-2">
-                                                                <div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                                                    <div className="h-full bg-rose-400 w-[45%]"></div>
-                                                                </div>
-                                                                <span className="font-bold text-gray-900">%45</span>
-                                                            </div>
-                                                        </div>
-                                                        <div className="flex items-center justify-between text-xs">
-                                                            <span className="text-gray-600">Kalite Beklentisi</span>
-                                                            <div className="flex items-center gap-2">
-                                                                <div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                                                    <div className="h-full bg-rose-400 w-[30%]"></div>
-                                                                </div>
-                                                                <span className="font-bold text-gray-900">%30</span>
-                                                            </div>
-                                                        </div>
-                                                        <div className="flex items-center justify-between text-xs">
-                                                            <span className="text-gray-600">Kargo Hasarı</span>
-                                                            <div className="flex items-center gap-2">
-                                                                <div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                                                    <div className="h-full bg-rose-400 w-[15%]"></div>
-                                                                </div>
-                                                                <span className="font-bold text-gray-900">%15</span>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                        </div>
-
-                                        <div className="col-span-12 lg:col-span-4 space-y-4">
-
-                                            {/* Simulator Widget */}
-                                            <div className="bg-indigo-900 rounded-xl p-5 text-white shadow-lg relative overflow-hidden">
-                                                <div className="absolute top-0 right-0 -mr-4 -mt-4 w-24 h-24 bg-white opacity-5 rounded-full blur-xl"></div>
-
-                                                <div className="flex items-center gap-2 mb-6">
-                                                    <TrendingUp className="w-5 h-5 text-indigo-300" />
-                                                    <h4 className="font-bold">Kârlılık Simülatörü</h4>
-                                                </div>
-
-                                                <div className="space-y-6">
-                                                    <div>
-                                                        <label className="text-[10px] font-bold text-indigo-300 uppercase flex justify-between">Yeni Satış Fiyatı</label>
-                                                        <input
-                                                            type="range"
-                                                            min={selectedProduct.price * 0.5}
-                                                            max={selectedProduct.price * 2}
-                                                            step="10"
-                                                            value={simulationState.price}
-                                                            onChange={(e) => updateSimulation(Number(e.target.value))}
-                                                            className="w-full h-1.5 bg-indigo-700 rounded-lg appearance-none cursor-pointer mt-3 accent-white"
-                                                        />
-                                                        <div className="flex justify-between items-center mt-3">
-                                                            <button onClick={() => adjustSim(-10)} className="w-8 h-8 rounded bg-indigo-800 hover:bg-indigo-700 text-white font-bold text-lg flex items-center justify-center">-</button>
-                                                            <input
-                                                                type="number"
-                                                                value={simulationState.price}
-                                                                onChange={(e) => updateSimulation(Number(e.target.value))}
-                                                                className="w-24 text-center bg-transparent border-b border-indigo-500 font-bold text-white focus:outline-none text-xl"
-                                                            />
-                                                            <button onClick={() => adjustSim(10)} className="w-8 h-8 rounded bg-indigo-800 hover:bg-indigo-700 text-white font-bold text-lg flex items-center justify-center">+</button>
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="bg-indigo-800/50 rounded-lg p-3 border border-indigo-700">
-                                                        <div className="flex justify-between items-end">
-                                                            <div>
-                                                                <p className="text-[10px] text-indigo-300 uppercase">Tahmini Yeni Marj</p>
-                                                                <p className={cn("text-2xl font-bold", simulationState.margin > 0 ? "text-white" : "text-rose-300")}>%{simulationState.margin.toFixed(1)}</p>
-                                                            </div>
-                                                            <div className={cn(
-                                                                "text-xs font-bold px-2 py-1 rounded",
-                                                                simulationState.diffMargin >= 0 ? "bg-emerald-500/20 text-emerald-300" : "bg-rose-500/20 text-rose-300"
-                                                            )}>
-                                                                {simulationState.diffMargin >= 0 ? '+' : ''}{simulationState.diffMargin.toFixed(1)}%
-                                                            </div>
-                                                        </div>
-                                                        <div className="mt-2 pt-2 border-t border-indigo-700/50 flex justify-between text-xs">
-                                                            <span className="text-indigo-300">Birim Kâr:</span>
-                                                            <span className={cn("font-bold", simulationState.newProfit > 0 ? "text-white" : "text-rose-300")}>{formatCurrency(simulationState.newProfit)}</span>
-                                                        </div>
-                                                    </div>
-
-                                                    <button className="w-full py-2.5 bg-white text-indigo-900 font-bold rounded-lg shadow-md hover:bg-indigo-50 transition-all flex items-center justify-center gap-2 text-sm">
-                                                        Uygula
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            {/* Quick Actions */}
-                                            <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm space-y-2">
-                                                <h4 className="text-[10px] font-bold text-gray-400 uppercase mb-2">Hızlı İşlemler</h4>
-                                                <button className="w-full text-left px-3 py-2 rounded-lg text-xs font-bold text-gray-700 hover:bg-gray-50 border border-gray-100 flex items-center gap-2 group transition-colors">
-                                                    <span className="w-6 h-6 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center group-hover:bg-orange-200">📢</span>
-                                                    Kampanya Oluştur
-                                                </button>
-                                                <button className="w-full text-left px-3 py-2 rounded-lg text-xs font-bold text-gray-700 hover:bg-gray-50 border border-gray-100 flex items-center gap-2 group transition-colors">
-                                                    <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center group-hover:bg-blue-200">📦</span>
-                                                    Stok Siparişi Ver
-                                                </button>
-                                                <button className="w-full text-left px-3 py-2 rounded-lg text-xs font-bold text-gray-700 hover:bg-gray-50 border border-gray-100 flex items-center gap-2 group transition-colors">
-                                                    <span className="w-6 h-6 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center group-hover:bg-rose-200">🛑</span>
-                                                    Satışı Durdur
-                                                </button>
-                                            </div>
-
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )
-            }
         </div >
     );
 };
