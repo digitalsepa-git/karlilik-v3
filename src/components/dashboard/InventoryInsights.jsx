@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { TrendingUp, Archive, AlertCircle, Clock, ArrowLeft } from 'lucide-react';
+import { TrendingUp, Archive, AlertCircle, Clock, ArrowLeft, Database, AlertTriangle } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import productCosts from '../../data/productCosts.json';
 
-export function InventoryInsights({ t, products = [], orders = [] }) {
+export function InventoryInsights({ t, products = [], orders = [], onNavigate }) {
     const [selectedProduct, setSelectedProduct] = useState(null);
     const [enrichmentData, setEnrichmentData] = useState(null);
 
@@ -76,6 +77,41 @@ export function InventoryInsights({ t, products = [], orders = [] }) {
     }, [products, orders]);
 
     const { fastMovers, slowMovers } = dynamicInsights;
+
+    const stockKPIs = React.useMemo(() => {
+        let totalCost = 0;
+        let riskValue = 0;
+
+        if (!products || products.length === 0) return { totalCost, riskValue };
+
+        const thirthyDaysAgo = new Date();
+        thirthyDaysAgo.setDate(thirthyDaysAgo.getDate() - 30);
+
+        products.forEach(p => {
+            const stock = p.stock || 0;
+            if (stock > 0) {
+                 const skuKey = p.sku || 'DEFAULT';
+                 const costs = productCosts[skuKey] || productCosts['DEFAULT'] || { cogs: p.price ? p.price * 0.4 : 0 };
+                 const costPrice = costs.cogs;
+                 const stockCost = stock * costPrice;
+                 totalCost += stockCost;
+
+                 // Calculate sales in last 30 days
+                 let sales30Days = 0;
+                 if (orders && orders.length > 0) {
+                     orders.filter(o => o.dateRaw >= thirthyDaysAgo && o.productName === p.name).forEach(() => {
+                         sales30Days += 1;
+                     });
+                 }
+
+                 // If no sales in 30 days and stock exists, it's considered risky capital (>90 days in UI context)
+                 if (sales30Days <= 1) {
+                     riskValue += stockCost;
+                 }
+            }
+        });
+        return { totalCost, riskValue };
+    }, [products, orders]);
 
     const handleOpenDetail = (item) => {
         const product = item.rawProduct;
@@ -188,9 +224,28 @@ export function InventoryInsights({ t, products = [], orders = [] }) {
             {/* Widget Header */}
             <div className="border-b border-slate-100 bg-slate-50/50 px-6 py-4 flex items-center justify-between">
                 <h3 className="font-semibold text-slate-900">📦 Stok ve Envanter Analizi</h3>
-                <span className="text-sm font-medium text-indigo-600 hover:text-indigo-700 cursor-pointer">
-                    Rapor Detayı
+                <span 
+                    onClick={() => onNavigate && onNavigate('inventory')}
+                    className="text-sm font-medium text-indigo-600 hover:text-indigo-700 cursor-pointer flex items-center"
+                >
+                    Tümünü Gör <span className="ml-1 text-lg leading-none">&rsaquo;</span>
                 </span>
+            </div>
+
+            {/* NEW STOCK KPI MINI-CARDS */}
+            <div className="grid grid-cols-2 gap-3 p-4 border-b border-gray-100 bg-slate-50/50 shrink-0">
+                <div className="bg-white border border-gray-100 rounded-lg p-3 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] uppercase font-bold text-gray-500 mb-1 flex items-center gap-1"><Database className="w-3.5 h-3.5 text-indigo-500"/> Depodaki Maliyet</span>
+                    <div className="flex items-end gap-2">
+                        <span className="text-xl font-black text-gray-900">₺{Math.round(stockKPIs.totalCost).toLocaleString('tr-TR')}</span>
+                    </div>
+                </div>
+                <div className="bg-white border border-rose-100 rounded-lg p-3 shadow-sm flex flex-col justify-center bg-rose-50/30">
+                    <span className="text-[10px] uppercase font-bold text-rose-500 mb-1 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5 text-rose-500"/> Riskli Sermaye ({">"}90 Gün)</span>
+                    <div className="flex items-center justify-between">
+                        <span className="text-xl font-black text-rose-700 pr-2">₺{Math.round(stockKPIs.riskValue).toLocaleString('tr-TR')}</span>
+                    </div>
+                </div>
             </div>
 
             {/* Split Body */}

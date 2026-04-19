@@ -564,15 +564,6 @@ export const CompetitionAnalysis = () => {
                     return histPrice;
                 }),
                 historyComp: Array(7).fill(0).map(() => simulatedCompPrice || basePrice),
-                status: isCheaper ? 'Lider' : (isMoreExpensive ? 'Kaybetti' : 'Rekabetçi'),
-                position: position,
-                positionLabel: positionLabel,
-                positionColor: positionColor,
-                positionBadge: positionBadge,
-                totalSales: stats.totalSales,
-                channelSales: stats.channelSales,
-                btnLabel: btnAction,
-                btnColor: btnColor
             };
         });
     }, [fetchedProducts, fetchedOrders, competitors]);
@@ -1358,6 +1349,7 @@ export const CompetitionAnalysis = () => {
                                 <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">En İyi Rakip</th>
                                 <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Konum</th>
                                 <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Satış (30 Gün)</th>
+                                <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Fiyat Trend (30G)</th>
                                 <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Aksiyon</th>
                             </tr>
                         </thead>
@@ -1420,6 +1412,19 @@ export const CompetitionAnalysis = () => {
                                             </div>
                                         </div>
                                     </td>
+                                    <td className="px-6 py-4" onClick={(e) => { e.stopPropagation(); handleOpenTrendModal(product); }}>
+                                        <div className="h-10 w-24 relative bg-slate-50/50 rounded border border-slate-100 overflow-hidden cursor-pointer group hover:border-indigo-300 hover:shadow-sm transition-all" title="Fiyat Tarihçesini Genişlet">
+                                            <svg viewBox="0 0 100 40" className="w-full h-full opacity-60 group-hover:opacity-100 transition-opacity">
+                                                {/* Competitor Line (Dashed, Emerald) */}
+                                                <path d="M0,25 Q15,30 30,22 T60,20 T100,22" fill="none" stroke="#10b981" strokeWidth="1.5" strokeDasharray="3,2" />
+                                                {/* My Line (Solid, Indigo) */}
+                                                <path d="M0,20 Q20,15 40,25 T80,18 T100,15" fill="none" stroke="#6366f1" strokeWidth="2" />
+                                            </svg>
+                                            <div className="absolute inset-0 bg-slate-900/0 group-hover:bg-slate-900/5 transition-colors flex items-center justify-center">
+                                                <BarChart3 className="w-4 h-4 text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-sm" />
+                                            </div>
+                                        </div>
+                                    </td>
                                     <td className="px-6 py-4 text-right">
                                         <div className="flex items-center justify-end gap-3">
                                             <button
@@ -1467,6 +1472,9 @@ export const CompetitionAnalysis = () => {
                                                 {product.trendyolMetrics.sales.toLocaleString()} Adet
                                             </div>
                                             <div className="text-[10px] text-slate-500">Satış (30 Gün)</div>
+                                        </td>
+                                        <td className="px-6 py-3">
+                                            <span className="text-[11px] text-slate-400 italic">-</span>
                                         </td>
                                         <td className="px-6 py-3 text-right">
                                         </td>

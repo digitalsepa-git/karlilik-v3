@@ -1,8 +1,8 @@
 
 import React, { useState } from 'react';
-import { ArrowUpDown, Download, AlertTriangle, Info, ChevronRight, ChevronDown, Layers, ShoppingBag, Globe, PieChart, TrendingUp, Zap, RefreshCw, RefreshCcw, ArrowUpRight, BarChart2, Sparkles, AlertCircle, X, PauseCircle, Tag, Search, Package, Truck, Megaphone, CreditCard, CheckCircle, Database, Wallet } from 'lucide-react';
+import { ArrowUpDown, Download, AlertTriangle, Info, ChevronRight, ChevronDown, Layers, ShoppingBag, Globe, TrendingUp, Zap, RefreshCw, RefreshCcw, ArrowUpRight, BarChart2, Sparkles, AlertCircle, X, PauseCircle, Tag, Search, Package, Truck, Megaphone, CreditCard, CheckCircle, Database, Wallet } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { LineChart, Line, ResponsiveContainer, ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, Legend, BarChart, Bar, ReferenceLine, Cell, Treemap, Sankey } from 'recharts';
+import { PieChart, Pie, LineChart, Line, ResponsiveContainer, ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, Legend, BarChart, Bar, ReferenceLine, Cell, Treemap, Sankey } from 'recharts';
 
 // UP1 Fix: Deterministic sparkline — no Math.random(), stable across renders.
 const generateSparklineData = (startValue, endValue) => {
@@ -34,7 +34,18 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
     const { products: fetchedProducts, loading: productsLoading } = productsData;
     const { orders: fetchedOrders, loading: ordersLoading } = ordersData;
 
-    // DYNAMIC FILTERING LOGIC
+    // DYNAMIC FILTERING & SORTING LOGIC
+    const [sortConfig, setSortConfig] = React.useState({ key: 'margin', direction: 'desc' }); // Default: En Kârlı (Marj)
+    const [searchQuery, setSearchQuery] = React.useState('');
+
+    const handleSort = (key) => {
+        let direction = 'desc';
+        if (sortConfig.key === key && sortConfig.direction === 'desc') {
+            direction = 'asc';
+        }
+        setSortConfig({ key, direction });
+    };
+
     const activeCategory = filters.category || 'all';
     const activeChannel = filters.channel || 'all';
     const activeDateRange = filters.dateRange || 'last30';
@@ -305,8 +316,15 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
         let GLOBAL_TOTAL_UNITS = 0;
         let GLOBAL_TOTAL_REVENUE = 0;
         let GLOBAL_IKAS_REVENUE = 0;
+        let GLOBAL_TOTAL_COGS = 0;
+        let GLOBAL_IKAS_COGS = 0;
         let GLOBAL_IKAS_UNITS = 0;
         
+        let rawChannelMets = {
+            ikas: { revenue: 0, cogs: 0, commission: 0, shipping: 0, tax: 0, sales: 0, name: 'Web', color: 'bg-indigo-500', icon: '🟣', id: 'ikas' },
+            trendyol: { revenue: 0, cogs: 0, commission: 0, shipping: 0, tax: 0, sales: 0, name: 'Trendyol', color: 'bg-orange-500', icon: '🟠', id: 'trendyol' }
+        };
+
         fetchedOrders.forEach(o => {
             if (!o.dateRaw) return;
             const d = new Date(o.dateRaw);
@@ -314,12 +332,29 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                 const isReturn = o.statusObj?.label === 'İade' || o.statusObj?.label === 'İptal' || o.statusObj?.label === 'CANCELLED' || o.statusObj?.label === 'REFUNDED';
                 if (!isReturn) {
                     const qty = o.quantity || 1;
+                    const cogsAmount = o.cogs || 0;
                     GLOBAL_TOTAL_UNITS += qty;
                     GLOBAL_TOTAL_REVENUE += (o.revenue || 0);
+                    GLOBAL_TOTAL_COGS += cogsAmount;
+                    
                     const chLower = o.channel?.toLowerCase() || '';
-                    if (chLower.includes('web') || chLower.includes('ikas')) {
+                    const isIkas = chLower.includes('web') || chLower.includes('ikas');
+                    const isTy = chLower.includes('trendyol');
+
+                    if (isIkas) {
                         GLOBAL_IKAS_REVENUE += (o.revenue || 0);
+                        GLOBAL_IKAS_COGS += cogsAmount;
                         GLOBAL_IKAS_UNITS += qty;
+                    }
+
+                    const target = isIkas ? rawChannelMets.ikas : (isTy ? rawChannelMets.trendyol : null);
+                    if (target) {
+                        target.revenue += (o.revenue || 0);
+                        target.cogs += cogsAmount;
+                        target.commission += (o.commission || 0);
+                        target.shipping += (o.shipping || o.shippingCost || 0);
+                        target.tax += (o.tax || 0);
+                        target.sales += qty;
                     }
                 }
             }
@@ -327,6 +362,8 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
         GLOBAL_TOTAL_UNITS = Math.max(1, GLOBAL_TOTAL_UNITS); // Prevent DivBy0
         GLOBAL_TOTAL_REVENUE = Math.max(1, GLOBAL_TOTAL_REVENUE);
         GLOBAL_IKAS_REVENUE = Math.max(1, GLOBAL_IKAS_REVENUE);
+        GLOBAL_TOTAL_COGS = Math.max(1, GLOBAL_TOTAL_COGS);
+        GLOBAL_IKAS_COGS = Math.max(1, GLOBAL_IKAS_COGS);
         GLOBAL_IKAS_UNITS = Math.max(1, GLOBAL_IKAS_UNITS);
 
         const GLOBAL_AD_BUDGET = globalGa?.totalAdCost || 0;
@@ -335,42 +372,64 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
             .filter(e => e.valueType === 'amount')
             .reduce((sum, e) => sum + calculateDailyExpense(e), 0) * globalTotalDays; // Not actually used for unit economics further down
 
-        // YÖNTEM 1: Reklam Gider Payı (Ikas Cirosu üstünden hesaplanmış % Oran)
+        // YÖNTEM 1: Reklam Gider Payı (Ikas Cirosu üstünden hesaplanmış % Oran - Ciro Rasyosu Maliyete Çarpılacak)
         // Dönemlik Filtrelenmiş Reklam Bütçesi
         const TOTAL_AD_BUDGET = ga?.totalAdCost || 0;
         const globalAdRatio = GLOBAL_IKAS_REVENUE > 0 ? (TOTAL_AD_BUDGET / GLOBAL_IKAS_REVENUE) : 0;
         
-        // YÖNTEM 2: Şirket Gider Payını (CİROYA % OLARAK ORANLIYORUZ)
-        // Kullanıcı isteğine göre Şirket Gideri ürünün fiyatına oranla artar (Yüzdesel yüklenir).
-        const globalSharedFixedRatio = TOTAL_SHARED_FIXED_OVERHEAD / Math.max(1, GLOBAL_TOTAL_REVENUE);
-        const globalIkasOnlyFixedRatio = IKAS_ONLY_FIXED_OVERHEAD / Math.max(1, GLOBAL_IKAS_REVENUE);
+        // YÖNTEM 2: Şirket Gider Payını (CİROYA % OLARAK ORANLIYORUZ - Bulunan yüzdeliği Maliyetle Çarpıyoruz)
+        // Kullanıcı isteğine göre Şirket Gider Rasyosu "Toplam Gider / Toplam Ciro" alınır, ürüne basılırken "Rasyo * Maliyet" yapılır.
+        const globalSharedFixedRatio = TOTAL_SHARED_FIXED_OVERHEAD / GLOBAL_TOTAL_REVENUE;
+        const globalIkasOnlyFixedRatio = IKAS_ONLY_FIXED_OVERHEAD / GLOBAL_IKAS_REVENUE;
         const globalIkasFullFixedRatio = globalSharedFixedRatio + globalIkasOnlyFixedRatio;
         const globalFixedRatio = globalIkasFullFixedRatio; // Keep variable assignment intact for broad reference
+
+        // Kanal Bazlı ABC Hesaplaması 
+        const calcChannelProfit = (mets, adRatio, sharedRatio, ikasRatio = 0) => {
+            const ad = adRatio * mets.cogs;
+            const fixed = (sharedRatio * mets.cogs) + (ikasRatio * mets.cogs);
+            const netProfit = mets.revenue - mets.cogs - mets.shipping - mets.commission - mets.tax - ad - fixed;
+            const margin = mets.revenue > 0 ? (netProfit / mets.revenue) * 100 : 0;
+            return {
+                ...mets,
+                ad,
+                fixed,
+                netProfit,
+                margin
+            };
+        };
+
+        const channelMetrics = [
+            calcChannelProfit(rawChannelMets.trendyol, 0, globalSharedFixedRatio, 0),
+            calcChannelProfit(rawChannelMets.ikas, globalAdRatio, globalSharedFixedRatio, globalIkasOnlyFixedRatio)
+        ];
 
         // For Previous scope comparison (mock tracking similar logic if needed)
         const TOTAL_PREV_AD_BUDGET = ga?.prevTotalAdCost || TOTAL_AD_BUDGET;
 
         const prevGlobalUnitAdCost = TOTAL_PREV_AD_BUDGET / Math.max(1, TOTAL_PREV_UNITS);
-        const prevGlobalFixedRatio = TOTAL_SHARED_FIXED_OVERHEAD / Math.max(1, TOTAL_PREV_REVENUE);
+        const prevGlobalFixedRatio = TOTAL_SHARED_FIXED_OVERHEAD / Math.max(1, TOTAL_PREV_REVENUE); // Placeholder
         // -------------------------------------------------------------
 
         // Second Pass: Computed Products with mathematically strict Allocation
         const computedProducts = enrichedRawProducts.map(product => {
-            // Ikas bazlı Revenue ve Adet bulma (Reklam sadece ona orantılı dağılır, altyapı ona verilir)
+            // Ikas bazlı Maliyet ve Adet bulma (Reklam sadece ona orantılı dağılır, altyapı ona verilir)
             let productIkasRev = 0;
+            let productIkasCogs = 0;
             if (product.pOrders) {
                 product.pOrders.forEach(o => {
                     const chLower = o.channel?.toLowerCase() || '';
                     const isIkasOrWeb = chLower.includes('web') || chLower.includes('ikas');
                     if (isIkasOrWeb && o.statusObj?.label !== 'İade' && o.statusObj?.label !== 'İptal' && o.statusObj?.label !== 'CANCELLED' && o.statusObj?.label !== 'REFUNDED') {
                         productIkasRev += (o.revenue || 0);
+                        productIkasCogs += (o.cogs || 0);
                     }
                 });
             }
 
-            // REKLAM (Sadece Ikas Cirosu Üstünden), SABİT GİDER (Ciro Oranı Tümü + Sadece Ikas Altyapı Ciro Oranı)
-            const allocatedAdBudget = globalAdRatio * productIkasRev;
-            const allocatedFixed = (globalSharedFixedRatio * product.actualRevenue) + (globalIkasOnlyFixedRatio * productIkasRev);
+            // REKLAM (Sadece Ikas Maliyeti Üstünden), SABİT GİDER (Maliyet Oranı Tümü + Sadece Ikas Altyapı Maliyet Oranı)
+            const allocatedAdBudget = globalAdRatio * productIkasCogs;
+            const allocatedFixed = (globalSharedFixedRatio * product.cogs) + (globalIkasOnlyFixedRatio * productIkasCogs);
 
             // Önceki dönem değişkenleri
             const prevGlobalUnitAdCost = TOTAL_PREV_AD_BUDGET / Math.max(1, TOTAL_PREV_UNITS);
@@ -379,21 +438,22 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
             // Eski veri mimarisini bozmamak adına prevFixed approximate
             const prevAllocatedFixed = prevGlobalFixedRatio * (product.actualRevenue || 0);
 
-            // Tampon Fiyat (Buffer Price - Break-Even) Maktu reklam hesabı artık farklı çalışacağı için tahmini bir değer kullanıyoruz
+            // Tampon Fiyat (Buffer Price - Break-Even) Maktu hesap
             let bufferPrice = 0;
             if (product.unitsSold > 0 && product.actualRevenue > 0) {
                 const unitSmm = product.cogs / product.unitsSold;
                 const unitShipping = product.shipping / product.unitsSold;
+                const unitFixed = allocatedFixed / product.unitsSold;
+                const unitAd = allocatedAdBudget / product.unitsSold;
                 
-                // Karışık (Blended) Komisyon, Reklam ve Şirket Gideri Oranları (Hepsi Ciro Bazlı)
+                // Komisyon fiyata orantılıdır (Blended rate)
                 const blended_c_rate = product.commission / product.actualRevenue;
-                const blended_a_rate = allocatedAdBudget / product.actualRevenue;
-                const blended_f_rate = allocatedFixed / product.actualRevenue;
                 
                 // Tam Cebirsel Break-Even Çözümü (Vergi / 6 Input Mahsuplaşması Dahil)
-                // Şirket Gideri Fiyata Oransal ise Paydada yer alır!
-                const bufferNumerator = unitSmm + unitShipping;
-                const bufferDenominator = 1 - blended_c_rate - (1.2 * blended_a_rate) - (1.2 * blended_f_rate);
+                // P(1-C) = SMM + KARGO + REKLAM(sabit) + GIDER(sabit) 
+                // Reklam ve Şirket gideri SMM bazlı olduğu için fiyata bağımlı esnemezler.
+                const bufferNumerator = unitSmm + unitShipping + (1.2 * unitAd) + (1.2 * unitFixed);
+                const bufferDenominator = 1 - blended_c_rate;
                 
                 bufferPrice = bufferDenominator > 0 ? (bufferNumerator / bufferDenominator) : 0;
             }
@@ -509,12 +569,12 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                     // SABİTLENMİŞ KOMİSYON ORANI %2 Ikas vs %15 Trendyol
                     _comunit = isTrendyol ? (salesPrice * 0.15) : (salesPrice * 0.02);
                     
-                    // REKLAM HARCAMASI SADECE IKASA BÖLÜŞTÜRÜLDÜ - CİRO ORANIYLA
-                    _aunit = isTrendyol ? 0 : (salesPrice * globalAdRatio);
+                    // REKLAM HARCAMASI SADECE IKASA BÖLÜŞTÜRÜLDÜ - SMM (COGS) ORANIYLA
+                    _aunit = isTrendyol ? 0 : (_cunit * globalAdRatio);
                     
-                    // SABİT GİDER CİRO ÜZERİNDEN YÜZDESEL ORANLANIR! TREDNYOL'DA IKAS ALTYAPISI HARİÇ.
+                    // SABİT GİDER SMM (COGS) ÜZERİNDEN YÜZDESEL ORANLANIR! TREDNYOL'DA IKAS ALTYAPISI HARİÇ.
                     const currentFixedRatio = isTrendyol ? globalSharedFixedRatio : globalIkasFullFixedRatio;
-                    _fixedunit = salesPrice * currentFixedRatio;
+                    _fixedunit = _cunit * currentFixedRatio;
                     
                     const kdvRate = 0.20;
                     const outputVat = salesPrice - (salesPrice / (1 + kdvRate));
@@ -524,12 +584,11 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                     _taxunit = Math.max(0, outputVat - cogsVat - shippingVat - commissionVat);
                     
                     const c_rate = isTrendyol ? 0.15 : 0.02;
-                    const a_rate = isTrendyol ? 0 : globalAdRatio;
-                    const f_rate = currentFixedRatio;
                     
-                    // Tam Cebirsel Çözüm: Şirket Gideri ve Reklam oransal (denominatorde), Sabit olanlar (Payda) SMM ve Kargo.
-                    const bufferNumerator = _cunit + _sunit;
-                    const bufferDenominator = 1 - c_rate - (1.2 * a_rate) - (1.2 * f_rate);
+                    // Ürün SMM (COGS) bağlı hesaplanan Reklam ve Sabit Gider tutarı (Örn: 950 TL) sabittir.
+                    // Algebrası şuna evrilir: P(1 - c) = SMM + Kargo + 1.2(Reklam) + 1.2(Gider)
+                    const bufferNumerator = _cunit + _sunit + (1.2 * _aunit) + (1.2 * _fixedunit);
+                    const bufferDenominator = 1 - c_rate;
                     _finalBufferPrice = bufferDenominator > 0 ? (bufferNumerator / bufferDenominator) : 0;
                     
                     const hypotheticalCosts = _cunit + _sunit + _comunit + _taxunit + _aunit + _fixedunit;
@@ -549,21 +608,19 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                     const commissionVat = _comunit - (_comunit / (1 + kdvRate));
                     _taxunit = Math.max(0, outputVat - cogsVat - shippingVat - commissionVat);
 
-                    // REKLAM HARCAMASI SADECE IKASA BÖLÜŞTÜRÜLDÜ - CİRO ORANIYLA
-                    _aunit = isTrendyol ? 0 : (salesPrice * globalAdRatio);
+                    // REKLAM HARCAMASI SADECE IKASA BÖLÜŞTÜRÜLDÜ - SMM ORANIYLA
+                    _aunit = isTrendyol ? 0 : (_cunit * globalAdRatio);
                     
-                    // SABİT GİDER CİRO ÜZERİNDEN YÜZDESEL ORANLANIR! TREDNYOL'DA IKAS ALTYAPISI HARİÇ.
+                    // SABİT GİDER SMM (COGS) ÜZERİNDEN YÜZDESEL ORANLANIR! TREDNYOL'DA IKAS ALTYAPISI HARİÇ.
                     const currentFixedRatio = isTrendyol ? globalSharedFixedRatio : globalIkasFullFixedRatio;
-                    _fixedunit = salesPrice * currentFixedRatio;
+                    _fixedunit = _cunit * currentFixedRatio;
 
                     const c_rate = isTrendyol ? 0.15 : 0.02;
-                    const a_rate = isTrendyol ? 0 : globalAdRatio;
-                    const f_rate = currentFixedRatio;
                     
-                    // 0 satışlı varyantlarda SMM fiyatın 0.25'i varsayılır, SMM fiyata oransal hale gelir.
-                    // Algebrası şuna evrilir: P(0.75 - c - 1.2a - 1.2f) = Kargo
-                    const bufferNumerator = _sunit;
-                    const bufferDenominator = 0.75 - c_rate - (1.2 * a_rate) - (1.2 * f_rate);
+                    // Ürün SMM (COGS) bağlı hesaplanan Reklam ve Sabit Gider tutarı sabittir.
+                    // Algebrası şuna evrilir: P(1 - c) = SMM + Kargo + 1.2(Reklam) + 1.2(Gider)
+                    const bufferNumerator = _cunit + _sunit + (1.2 * _aunit) + (1.2 * _fixedunit);
+                    const bufferDenominator = 1 - c_rate;
                     _finalBufferPrice = bufferDenominator > 0 ? (bufferNumerator / bufferDenominator) : 0;
 
                     const hypotheticalCosts = _cunit + _sunit + _comunit + _taxunit + _aunit + _fixedunit;
@@ -646,10 +703,11 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
             };
         });
 
-        // Sort Table Products by Sales Revenue Descending
-        tableProducts.sort((a, b) => b.revenue - a.revenue);
+        // 3. SOrt Table Products based on dynamic UI selection
+        // Sorting moved outside of this heavy useMemo to respect sortConfig without re-computing everything.
 
         return {
+            channelMetrics,
             PRODUCTS: computedProducts,
             TABLE_PRODUCTS: tableProducts,
             totalSales: sumSales,
@@ -664,7 +722,41 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
         };
     }, [fetchedProducts, filteredOrders, filteredOrdersPrev, ga, dateStart, dateEnd]);
 
-    const { PRODUCTS, TABLE_PRODUCTS, totalSales, totalCOGS, totalShipping, totalCommission, totalTax, totalFixedCost, totalReturnAmt, totalReturnQty, TOTAL_AD_BUDGET } = computedData;
+    const { channelMetrics, PRODUCTS, TABLE_PRODUCTS, totalSales, totalCOGS, totalShipping, totalCommission, totalTax, totalFixedCost, totalReturnAmt, totalReturnQty, TOTAL_AD_BUDGET } = computedData;
+    
+    const sortedTableProducts = React.useMemo(() => {
+        const sorted = [...TABLE_PRODUCTS].filter(p => {
+            if (!searchQuery) return true;
+            const q = searchQuery.toLowerCase();
+            return (p.name && p.name.toLowerCase().includes(q)) || (p.sku && p.sku.toLowerCase().includes(q));
+        });
+
+        sorted.sort((a, b) => {
+            const getSortValue = (item) => {
+                switch (sortConfig.key) {
+                    case 'price': return item.price;
+                    case 'cogs': return item.cogs;
+                    case 'shipping': return item.shipping;
+                    case 'commission': return item.commission;
+                    case 'fixedCost': return item.fixedCost;
+                    case 'ads': return item.ads;
+                    case 'tax': return item.tax;
+                    case 'margin': return item.margin;
+                    case 'unitNetProfit': return item.unitNetProfit;
+                    case 'revenue': default: return item.actualRevenue || 0;
+                }
+            };
+
+            const aVal = getSortValue(a);
+            const bVal = getSortValue(b);
+
+            if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+            if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+            return 0;
+        });
+        return sorted;
+    }, [TABLE_PRODUCTS, sortConfig, searchQuery]);
+
     const [selectedExpense, setSelectedExpense] = useState(null);
     const [expandedRows, setExpandedRows] = useState(new Set());
 
@@ -675,8 +767,8 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
     // --- Pagination Logic (UP3 fix: uses TABLE_PRODUCTS) ---
     const indexOfLastRow = currentPage * rowsPerPage;
     const indexOfFirstRow = indexOfLastRow - rowsPerPage;
-    const currentRows = TABLE_PRODUCTS.slice(indexOfFirstRow, indexOfLastRow);
-    const totalPages = Math.ceil(TABLE_PRODUCTS.length / rowsPerPage);
+    const currentRows = sortedTableProducts.slice(indexOfFirstRow, indexOfLastRow);
+    const totalPages = Math.ceil(sortedTableProducts.length / rowsPerPage);
 
     const changePage = (direction) => {
         if (direction === -1 && currentPage > 1) {
@@ -1664,14 +1756,14 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                 // 2. Critical: product with highest CPA-to-revenue ratio
                                 const worstCPA = [...PRODUCTS].filter(p => p.adSpend > 0).sort((a, b) => (b.adSpend / Math.max(b.actualRevenue || 1, 1)) - (a.adSpend / Math.max(a.actualRevenue || 1, 1)))[0];
 
-                                // 3. Warning: product with highest stock (potential bloat)
-                                const mostStocked = [...PRODUCTS].filter(p => p.stock !== undefined).sort((a, b) => b.stock - a.stock)[0];
+                                // 3. Warning: product with high volume but very low margin
+                                const highVolumeLowMargin = [...PRODUCTS].filter(p => p.unitsSold > 5 && p.margin > 0 && p.margin < 15).sort((a, b) => b.unitsSold - a.unitsSold)[0];
 
                                 // 4. Alert: product with worst (most negative) net profit
                                 const worstLoss = [...PRODUCTS].sort((a, b) => a.netProfit - b.netProfit)[0];
 
-                                // 5. Info: product with highest return amount
-                                const worstReturn = [...PRODUCTS].filter(p => p.returnAmt > 0).sort((a, b) => b.returnAmt - a.returnAmt)[0];
+                                // 5. Info: product where ops costs (shipping + commission) eat the most revenue
+                                const highOpsCost = [...PRODUCTS].filter(p => p.actualRevenue > 0).sort((a, b) => ((b.shipping + b.commission) / b.actualRevenue) - ((a.shipping + a.commission) / a.actualRevenue))[0];
 
                                 const aiInsights = [
                                     bestOpportunity && {
@@ -1698,17 +1790,17 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                         text: <span><strong>{worstCPA.name.split(' ').slice(0, 3).join(' ')}</strong> ürününün müşteri edinimi ve pazarlama giderleri, getirdiği ciroya oranla oldukça yoğun seviyede. Hedef kitle optimizasyonu veya kanal bazlı bütçe daraltması değerlendirilmeli.</span>,
                                         action: 'Reklamları Analiz Et'
                                     },
-                                    mostStocked && {
+                                    highVolumeLowMargin && {
                                         id: 3,
                                         type: 'warning',
-                                        icon: Package,
+                                        icon: BarChart2,
                                         color: 'amber',
-                                        title: 'Stok Devir Tavsiyesi',
-                                        productName: mostStocked.name,
-                                        productId: mostStocked.id,
-                                        data: { productName: mostStocked.name },
-                                        text: <span><strong>{mostStocked.name.split(' ').slice(0, 3).join(' ')}</strong> stoğu mevcut satış hızına göre depoda normalden daha yavaş eriyor. Finansal yükü hafifletmek adına stok eritici kampanya veya çapraz satış (bundle) kurguları düşünülebilir.</span>,
-                                        action: 'Kampanya Fikirleri'
+                                        title: 'Sürümden Kazanma Krizi',
+                                        productName: highVolumeLowMargin.name,
+                                        productId: highVolumeLowMargin.id,
+                                        data: { productName: highVolumeLowMargin.name },
+                                        text: <span><strong>{highVolumeLowMargin.name.split(' ').slice(0, 3).join(' ')}</strong> ürünü oldukça yüksek satış hacmine sahip ancak kâr marjı çok düşük. Bu üründe yapılacak ufak bir (örn: %3-5) stratejik fiyat artışı toplam şirket karlılığına pazar payı kaybetmeden devasa katkı sağlayabilir.</span>,
+                                        action: 'Fiyat Senaryosu Kur'
                                     },
                                     worstLoss && worstLoss.netProfit < 0 && {
                                         id: 4,
@@ -1722,17 +1814,17 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                                         text: <span><strong>{worstLoss.name.split(' ').slice(0, 3).join(' ')}</strong> kaleminde vergi, komisyon veya kargo düşüldükten sonra operasyonel net zararlar gözlemleniyor. Doğrudan maliyetlerin veya liste fiyatının acilen gözden geçirilmesi tavsiye edilir.</span>,
                                         action: 'Maliyetleri Ayır'
                                     },
-                                    worstReturn && {
+                                    highOpsCost && {
                                         id: 5,
                                         type: 'info',
-                                        icon: RefreshCcw,
+                                        icon: Truck,
                                         color: 'blue',
-                                        title: 'İade Kaybı Analizi',
-                                        productName: worstReturn.name,
-                                        productId: worstReturn.id,
-                                        data: { productName: worstReturn.name },
-                                        text: <span><strong>{worstReturn.name.split(' ').slice(0, 3).join(' ')}</strong> ürününde satıştan dönen iptal/iade kalemleri ortalamanın bir tık üzerinde seyrediyor. Ürün açıklamalarının veya kalite standartlarının güncellenmesi müşteri mennuniyetini artırabilir.</span>,
-                                        action: 'İade Tespiti'
+                                        title: 'Ağır Operasyon Gideri',
+                                        productName: highOpsCost.name,
+                                        productId: highOpsCost.id,
+                                        data: { productName: highOpsCost.name },
+                                        text: <span><strong>{highOpsCost.name.split(' ').slice(0, 3).join(' ')}</strong> satışlarında kargo ve platform komisyon bedelleri cironun aslan payını yutuyor. Desi/hacim optimizasyonu veya farklı pazar yerlerindeki komisyon oranlarının kıyaslanması önerilir.</span>,
+                                        action: 'Ops Giderlerini İncele'
                                     }
                                 ].filter(Boolean);
 
@@ -1798,8 +1890,218 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
                 </div>
             </div>
 
+            {/* Ürün Karlılık Aksiyonları (Dashboard'dan Alındı) */}
+            {(() => {
+                const criticalProducts = TABLE_PRODUCTS.flatMap(p => {
+                    const results = [];
+                    // Filtreleme (Mock çöp datalardan arındırma)
+                    if (p.category === 'Aksesuar' || p.category === 'Diğer' || (p.name && p.name.toLowerCase().includes('manyetik'))) return results;
+                    
+                    // Web / Ikas Kontrolü
+                    if (p.price > 0 && p.margin < 10) {
+                        results.push({
+                            id: `${p.id || p.sku}-ikas`,
+                            name: p.name,
+                            margin: p.margin,
+                            price: p.price,
+                            bufferPrice: p.bufferPrice,
+                            channelLabel: 'Web / Ikas'
+                        });
+                    }
+                    
+                    // Trendyol Kontrolü
+                    if (p.trendyolMetrics && p.trendyolMetrics.price > 0 && p.trendyolMetrics.margin < 10) {
+                        results.push({
+                            id: `${p.id || p.sku}-ty`,
+                            name: p.name,
+                            margin: p.trendyolMetrics.margin,
+                            price: p.trendyolMetrics.price,
+                            bufferPrice: p.trendyolMetrics.bufferPrice,
+                            channelLabel: 'Trendyol'
+                        });
+                    }
+                    
+                    return results;
+                }).sort((a,b) => a.margin - b.margin).slice(0, 8);
+
+                if (criticalProducts.length === 0) return null;
+
+                return (
+                    <div className="w-full mb-8">
+                        <div className="bg-white rounded-xl border border-rose-200 shadow-sm p-4 md:p-5 relative overflow-hidden">
+                            <div className="flex items-center justify-between mb-4">
+                                <div className="flex items-center gap-3">
+                                    <h3 className="text-gray-900 font-bold text-[15px] flex items-center gap-2">
+                                        <svg className="w-5 h-5 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                                        Ürün Karlılık Aksiyonları
+                                    </h3>
+                                    <span className="bg-rose-100 text-rose-700 text-xs font-bold px-2 py-0.5 rounded-md border border-rose-200">{criticalProducts.length} Kritik Alarm</span>
+                                </div>
+                            </div>
+                            
+                            <div className="flex overflow-x-auto gap-4 pb-2 snap-x">
+                                {criticalProducts.map((p, idx) => (
+                                    <div key={p.id || idx} className="min-w-[280px] p-4 rounded-xl border border-rose-100 bg-rose-50/40 flex flex-col justify-between snap-start">
+                                        <div>
+                                            <div className="flex justify-between items-start mb-2">
+                                                <p className="text-sm font-bold text-gray-900 line-clamp-1 pr-2" title={p.name}>{p.name}</p>
+                                                <span className="text-xs font-black text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded shadow-sm">%{(p.margin || 0).toFixed(1)}</span>
+                                            </div>
+                                            <div className="flex flex-col gap-1 mb-2">
+                                                <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">{p.channelLabel}</span>
+                                                <p className="text-[12px] text-slate-500">Satışta olduğu fiyat: <b>₺{(p.price || 0).toLocaleString('tr-TR')}</b></p>
+                                            </div>
+                                        </div>
+                                        <div className="flex justify-between items-center border-t border-rose-100/60 pt-3 mt-1.5">
+                                            <span className="text-[11px] text-slate-500 font-medium">Hedef Kârlılık İçin<br/>Tampon Fiyat:</span>
+                                            <span className="text-[14px] font-bold text-gray-900 border border-gray-200 px-2 py-1 rounded-md bg-white shadow-sm">₺{(p.bufferPrice || 0).toLocaleString('tr-TR', { maximumFractionDigits: 0 })}</span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
+
+            {/* KANAL BAZLI KARLILIK ÖZETİ & DOUGHNUT GRAFİKLER */}
+            <div className="mb-10">
+                <div className="flex items-center gap-2 mb-4">
+                    <BarChart2 className="w-5 h-5 text-gray-700" />
+                    <h2 className="text-lg font-bold text-gray-800">Kanal Bazlı Karlılık</h2>
+                </div>
+                
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
+                    {/* Sol Kısım: Kartlar */}
+                    <div className="lg:col-span-5 overflow-x-auto pb-2 -mx-6 px-6 sm:mx-0 sm:px-0">
+                        <div className="flex md:grid grid-cols-1 md:grid-cols-2 gap-4 min-w-[max-content] md:min-w-0">
+                            {channelMetrics && channelMetrics.sort((a,b) => b.revenue - a.revenue).map((ch) => (
+                                <div key={ch.id} className={`border rounded-2xl p-5 bg-white shadow-sm flex flex-col w-[260px] md:w-auto shrink-0 ${ch.id === 'trendyol' ? 'border-orange-200/50 shadow-orange-50' : 'border-indigo-200/50 shadow-indigo-50'}`}>
+                                    <div className="flex items-center gap-2 mb-4">
+                                        <span className={`w-2.5 h-2.5 rounded-full ${ch.id === 'trendyol' ? 'bg-orange-500' : 'bg-indigo-500'}`}></span>
+                                        <h3 className="font-bold text-gray-800 text-sm">{ch.name}</h3>
+                                    </div>
+                                    <div className="space-y-2.5 flex-1">
+                                        <div className="flex justify-between items-center text-sm">
+                                            <span className="text-gray-500">Ciro</span>
+                                            <span className="font-bold text-gray-900">{formatCompact(ch.revenue)}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center text-sm">
+                                            <span className="text-gray-500">Kâr</span>
+                                            <span className={`font-bold ${ch.netProfit >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                                {formatCompact(ch.netProfit)}
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between items-center text-sm">
+                                            <span className="text-gray-500">Marj</span>
+                                            <span className={`font-bold ${ch.margin >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                                %{Number(ch.margin || 0).toFixed(1)}
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between items-center text-sm">
+                                            <span className="text-gray-500">Komisyon</span>
+                                            <span className="font-bold text-purple-600">{formatCompact(ch.commission)}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center text-sm pt-2 mt-2 border-t border-gray-100">
+                                            <span className="text-gray-500">Satış</span>
+                                            <span className="font-bold text-gray-900 text-base">{formatNumber(ch.sales)} ad.</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Sağ Kısım: Pasta Grafikler */}
+                    <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-2 gap-8 lg:border-l lg:border-gray-100 lg:pl-8">
+                        {/* Ciro Grafiği */}
+                        <div className="h-[240px] relative">
+                            <h3 className="text-sm font-semibold text-gray-600 text-center mb-2">Ciro Dağılımı</h3>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                    <Pie
+                                        data={channelMetrics.map(ch => ({ name: ch.name, value: Math.max(0, ch.revenue), id: ch.id }))}
+                                        cx="50%"
+                                        cy="50%"
+                                        innerRadius={65}
+                                        outerRadius={85}
+                                        paddingAngle={2}
+                                        dataKey="value"
+                                        stroke="none"
+                                    >
+                                        {channelMetrics.map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={entry.id === 'trendyol' ? '#f97316' : '#6366f1'} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip formatter={(value) => formatCompact(value)} />
+                                </PieChart>
+                            </ResponsiveContainer>
+                            <div className="absolute inset-0 top-6 flex flex-col items-center justify-center pointer-events-none">
+                                <span className="text-xs text-gray-400 font-medium tracking-widest uppercase">Toplam</span>
+                                <span className="text-xl font-bold text-gray-900">
+                                    {formatCompact(channelMetrics.reduce((sum, ch) => sum + Math.max(0, ch.revenue), 0))}
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* Kar Grafiği */}
+                        <div className="h-[240px] relative">
+                            <h3 className="text-sm font-semibold text-gray-600 text-center mb-2">Net Kâr Dağılımı</h3>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                    <Pie
+                                        data={channelMetrics.map(ch => ({ name: ch.name, value: Math.max(0, ch.netProfit), id: ch.id }))}
+                                        cx="50%"
+                                        cy="50%"
+                                        innerRadius={65}
+                                        outerRadius={85}
+                                        paddingAngle={2}
+                                        dataKey="value"
+                                        stroke="none"
+                                    >
+                                        {channelMetrics.map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={entry.id === 'trendyol' ? '#f97316' : '#6366f1'} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip formatter={(value) => formatCompact(value)} />
+                                </PieChart>
+                            </ResponsiveContainer>
+                            <div className="absolute inset-0 top-6 flex flex-col items-center justify-center pointer-events-none">
+                                <span className="text-xs text-gray-400 font-medium tracking-widest uppercase">Toplam</span>
+                                <span className="text-xl font-bold text-emerald-600">
+                                    {formatCompact(channelMetrics.reduce((sum, ch) => sum + Math.max(0, ch.netProfit), 0))}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             {/* 3. Detailed Unit Economics P&L Table (New) */}
             <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden mb-8">
+                {/* TABLE HEADER WITH SEARCH */}
+                <div className="p-4 border-b border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gray-50/50">
+                    <div>
+                        <h3 className="text-sm font-bold text-gray-800">Birim Ekonomi Tablosu</h3>
+                        <p className="text-[11px] text-gray-500 mt-0.5">Aşağıdaki tablodan ürün veya SKU bazlı karlılık bilgilerini arayabilir ve sıralayabilirsiniz.</p>
+                    </div>
+                    <div className="relative">
+                        <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                            type="text"
+                            placeholder="Ürün adı veya SKU ara..."
+                            value={searchQuery}
+                            onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
+                            className="bg-white border border-gray-200 text-sm rounded-lg pl-9 pr-8 py-2 w-full md:w-72 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-sm"
+                        />
+                        {searchQuery && (
+                            <button onClick={() => { setSearchQuery(''); setCurrentPage(1); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                                <X className="w-3.5 h-3.5" />
+                            </button>
+                        )}
+                    </div>
+                </div>
+
                 <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse">
                         <thead className="relative z-20">
@@ -1813,75 +2115,102 @@ export const ProductProfitability = ({ t, onConsultAI, filters = {} }) => {
 
                             <tr className="bg-white text-[10px] font-bold text-gray-500 uppercase border-b border-gray-200 leading-tight">
 
-                                <th className="p-3 text-right border-r border-gray-50 min-w-[80px] relative group cursor-help">
-                                    <span className="border-b border-dotted border-gray-300">Satış Fiyatı</span>
+                                <th className="p-3 text-right border-r border-gray-50 min-w-[80px] relative group cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => handleSort('price')}>
+                                    <div className="flex items-center justify-end gap-1">
+                                        {sortConfig.key === 'price' && <ArrowUpDown className="w-3 h-3 text-indigo-500" />}
+                                        <span className="border-b border-dotted border-gray-300">Satış Fiyatı</span>
+                                    </div>
                                     <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-32 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-center normal-case pointer-events-none">
                                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 border-4 border-transparent border-b-gray-900"></div>
-                                        KDV dahil birim liste satış fiyatı.
+                                        KDV dahil birim liste satış fiyatı. (Sıralamak için tıkla)
                                     </div>
                                 </th>
 
-                                <th className="p-3 text-right border-r border-gray-50 text-gray-400 relative group cursor-help">
-                                    <span className="border-b border-dotted border-gray-300">Maliyet/SMM</span>
+                                <th className="p-3 text-right border-r border-gray-50 text-gray-400 relative group cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => handleSort('cogs')}>
+                                    <div className="flex items-center justify-end gap-1">
+                                        {sortConfig.key === 'cogs' && <ArrowUpDown className="w-3 h-3 text-orange-400" />}
+                                        <span className="border-b border-dotted border-gray-300">Maliyet/SMM</span>
+                                    </div>
                                     <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-40 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-center normal-case pointer-events-none">
                                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 border-4 border-transparent border-b-gray-900"></div>
-                                        Satılan bir malın brüt geliş veya üretim maliyeti.
+                                        Satılan bir malın brüt geliş veya üretim maliyeti. (Sıralamak için tıkla)
                                     </div>
                                 </th>
 
-                                <th className="p-3 text-right border-r border-gray-50 text-gray-400 relative group cursor-help">
-                                    <span className="border-b border-dotted border-gray-300">Kargo & Pkt.</span>
+                                <th className="p-3 text-right border-r border-gray-50 text-gray-400 relative group cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => handleSort('shipping')}>
+                                     <div className="flex items-center justify-end gap-1">
+                                        {sortConfig.key === 'shipping' && <ArrowUpDown className="w-3 h-3 text-orange-400" />}
+                                        <span className="border-b border-dotted border-gray-300">Kargo & Pkt.</span>
+                                    </div>
                                     <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-48 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-left normal-case pointer-events-none">
                                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 border-4 border-transparent border-b-gray-900"></div>
                                         Lojistik ve koli maliyeti.
                                     </div>
                                 </th>
 
-                                <th className="p-3 text-right border-r border-gray-50 text-gray-400 relative group cursor-help">
-                                    <span className="border-b border-dotted border-gray-300">Komisyon</span>
+                                <th className="p-3 text-right border-r border-gray-50 text-gray-400 relative group cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => handleSort('commission')}>
+                                    <div className="flex items-center justify-end gap-1">
+                                        {sortConfig.key === 'commission' && <ArrowUpDown className="w-3 h-3 text-orange-400" />}
+                                        <span className="border-b border-dotted border-gray-300">Komisyon</span>
+                                    </div>
                                     <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-48 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-left normal-case pointer-events-none">
                                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 border-4 border-transparent border-b-gray-900"></div>
                                         Pazaryeri ve altyapı(ödeme) komisyonları.
                                     </div>
                                 </th>
 
-                                <th className="p-3 text-right border-r border-gray-50 text-gray-400 relative group cursor-help">
-                                    <span className="border-b border-dotted border-gray-300">Şirket Gider Payı</span>
+                                <th className="p-3 text-right border-r border-gray-50 text-gray-400 relative group cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => handleSort('fixedCost')}>
+                                    <div className="flex items-center justify-end gap-1">
+                                        {sortConfig.key === 'fixedCost' && <ArrowUpDown className="w-3 h-3 text-orange-400" />}
+                                        <span className="border-b border-dotted border-gray-300">Şirket Gider Payı</span>
+                                    </div>
                                     <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-48 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-left normal-case pointer-events-none">
                                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 border-4 border-transparent border-b-gray-900"></div>
                                         Son 3 aylık kira, maaş, yazılım gibi genel giderlerin satılan adet başına payı.
                                     </div>
                                 </th>
 
-                                <th className="p-3 text-right border-r border-gray-50 text-orange-400 relative group cursor-help">
-                                    <span className="border-b border-dotted border-orange-300">Reklam (CPA)</span>
+                                <th className="p-3 text-right border-r border-gray-50 text-orange-400 relative group cursor-pointer hover:bg-orange-50 transition-colors" onClick={() => handleSort('ads')}>
+                                    <div className="flex items-center justify-end gap-1">
+                                        {sortConfig.key === 'ads' && <ArrowUpDown className="w-3 h-3 text-orange-500" />}
+                                        <span className="border-b border-dotted border-orange-300">Reklam (CPA)</span>
+                                    </div>
                                     <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-40 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-center normal-case pointer-events-none">
                                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 border-4 border-transparent border-b-gray-900"></div>
                                         1 adet satışı getirmek için harcanan ortalama pazarlama bütçesi.
                                     </div>
                                 </th>
 
-                                <th className="p-3 text-right border-r border-gray-100 text-gray-400 relative group cursor-help">
-                                    <span className="border-b border-dotted border-gray-300">Vergi (KDV)</span>
+                                <th className="p-3 text-right border-r border-gray-100 text-gray-400 relative group cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => handleSort('tax')}>
+                                    <div className="flex items-center justify-end gap-1">
+                                        {sortConfig.key === 'tax' && <ArrowUpDown className="w-3 h-3 text-gray-400" />}
+                                        <span className="border-b border-dotted border-gray-300">Vergi (KDV)</span>
+                                    </div>
                                     <div className="absolute top-full right-0 mt-2 w-40 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-center normal-case pointer-events-none">
                                         <div className="absolute bottom-full right-4 border-4 border-transparent border-b-gray-900"></div>
                                         Devlete ödenecek tahmini net KDV yükü.
                                     </div>
                                 </th>
 
-                                <th className="p-3 text-right bg-emerald-50/30 text-emerald-600 min-w-[90px] relative group cursor-help">
-                                    <span className="border-b border-dotted border-emerald-300">BİRİM NET KÂR</span>
+                                <th className="p-3 text-right bg-emerald-50/30 text-emerald-600 min-w-[90px] relative group cursor-pointer hover:bg-emerald-50/70 transition-colors" onClick={() => handleSort('unitNetProfit')}>
+                                    <div className="flex items-center justify-end gap-1">
+                                        {sortConfig.key === 'unitNetProfit' && <ArrowUpDown className="w-3 h-3 text-emerald-500" />}
+                                        <span className="border-b border-dotted border-emerald-300">BİRİM NET KÂR</span>
+                                    </div>
                                     <div className="absolute top-full right-0 mt-2 w-48 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-center normal-case pointer-events-none">
                                         <div className="absolute bottom-full right-4 border-4 border-transparent border-b-gray-900"></div>
-                                        1 üründen doğrudan ürün bazlı tüm kesintiler (Opr., CPA, KDV vb.) düşüldükten sonra cebe kalan net tutar.
+                                        1 üründen kesintiler düşüldükten sonra cebe kalan net tutar. (Sıralamak için tıkla)
                                     </div>
                                 </th>
 
-                                <th className="p-3 text-center text-gray-400 relative group cursor-help">
-                                    <span className="border-b border-dotted border-gray-300">Marj (%)</span>
+                                <th className="p-3 text-center text-gray-400 relative group cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => handleSort('margin')}>
+                                    <div className="flex items-center justify-center gap-1">
+                                        {sortConfig.key === 'margin' && <ArrowUpDown className="w-3 h-3 text-emerald-400" />}
+                                        <span className="border-b border-dotted border-gray-300">Marj (%)</span>
+                                    </div>
                                     <div className="absolute top-full right-0 mt-2 w-32 p-2 bg-gray-900 text-white text-[10px] font-normal rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-center normal-case pointer-events-none">
                                         <div className="absolute bottom-full right-2 border-4 border-transparent border-b-gray-900"></div>
-                                        Birim Net Kâr / Satış Fiyatı oranı.
+                                        Birim Net Kâr / Satış Fiyatı oranı. (Sıralamak için tıkla)
                                     </div>
                                 </th>
                             </tr>

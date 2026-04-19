@@ -1,0 +1,10 @@
+import React, { useState } from 'react';
+import {
+    Home, Search, Star, AlertTriangle, TrendingDown, Lightbulb, CheckCircle,
+    TrendingUp, FileSpreadsheet, Percent, Target, AlertOctagon, PackageX,
+    Filter, LayoutTemplate, Copy, FileText, Send, X, MoreHorizontal, Check
+} from 'lucide-react';
+import {
+    LineChart, Line, ResponsiveContainer
+} from 'recharts';
+

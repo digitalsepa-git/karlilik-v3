@@ -14,18 +14,18 @@ export const DataProvider = ({ children }) => {
 
     // Ana verileri tek bir sefer çekiyoruz
     const { products, categories, loading: productsLoading, error: productsError, refetch: refetchProducts } = useIkasProducts();
-    const { orders, loading: ordersLoading, error: ordersError } = useOrders(products);
+    const { orders, transactions, loading: ordersLoading, error: ordersError } = useOrders(products);
     const { data: gaData, loading: gaLoading, error: gaError } = useGoogleAnalytics(globalDateRange.startDate, globalDateRange.endDate);
 
     const value = useMemo(() => ({
         globalDateRange,
         setGlobalDateRange,
-        ordersData: { orders, loading: ordersLoading, error: ordersError },
+        ordersData: { orders, transactions, loading: ordersLoading, error: ordersError },
         productsData: { products, categories, loading: productsLoading, error: productsError, refetch: refetchProducts },
         analyticsData: { data: gaData, loading: gaLoading, error: gaError }
     }), [
         globalDateRange, 
-        orders, ordersLoading, ordersError, 
+        orders, transactions, ordersLoading, ordersError, 
         products, categories, productsLoading, productsError, 
         gaData, gaLoading, gaError
     ]);

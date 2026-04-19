@@ -52,9 +52,6 @@ export function MarketingPerformance({ startDate, endDate }) {
                     <Megaphone className="h-4 w-4 text-indigo-600" />
                     <h3 className="font-semibold text-slate-900">Pazarlama Performansı</h3>
                 </div>
-                <span className="text-xs font-medium text-slate-400 hover:text-indigo-600 cursor-pointer transition-colors">
-                    Analiz Et
-                </span>
             </div>
 
             {/* Content Stack */}

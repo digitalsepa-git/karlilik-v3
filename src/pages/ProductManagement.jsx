@@ -13,6 +13,14 @@ export function ProductManagement({ t }) {
 
     // Filter Logic
     const [expandedRows, setExpandedRows] = useState(new Set());
+    
+    // Advanced Filter State
+    const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
+    const [tempFilters, setTempFilters] = useState([{ id: Date.now().toString(), field: 'category', operator: 'contains', value: '' }]);
+    const [activeFilters, setActiveFilters] = useState([]);
+    
+    const availableCategories = Array.from(new Set(products.map(p => p.category).filter(Boolean))).sort();
+    const availableBrands = Array.from(new Set(products.map(p => p.brand).filter(Boolean))).sort();
 
     // Chart Interaction State
     const [hoveredData, setHoveredData] = useState(null);
@@ -27,14 +35,22 @@ export function ProductManagement({ t }) {
 
         // 1. Calculate Scales
         const prices = dataPoints.map(d => d.price);
-        const profits = dataPoints.map(d => d.profit);
-        const allValues = [...prices, ...profits];
-
-        const maxVal = Math.max(...allValues) * 1.1;
-        const minVal = 0;
+        
+        let maxVal = Math.max(...prices);
+        let minVal = Math.min(...prices);
+        
+        // Handle flat lines (e.g. price never changed)
+        if (maxVal === minVal) {
+            maxVal = maxVal * 1.1;
+            minVal = minVal * 0.9;
+        } else {
+            maxVal = maxVal * 1.05;
+            minVal = minVal * 0.95;
+        }
+        
         const range = maxVal - minVal;
 
-        // Area dimensions (Leave space for X-axis labels)
+        // Area dimensions
         const CHART_HEIGHT = 100; // viewbox units
         const AXIS_HEIGHT = 15;
         const PLOT_HEIGHT = CHART_HEIGHT - AXIS_HEIGHT; // 85
@@ -42,7 +58,6 @@ export function ProductManagement({ t }) {
         // 2. Coordinate Helper
         const getCoords = (val, i) => {
             const x = (i / (dataPoints.length - 1)) * 100;
-            // Map value to 0 -> PLOT_HEIGHT range, inverted
             const y = PLOT_HEIGHT - ((val - minVal) / range) * PLOT_HEIGHT;
             return { x, y };
         };
@@ -52,31 +67,15 @@ export function ProductManagement({ t }) {
             return `${c.x},${c.y}`;
         }).join(" ");
 
-        const profitPoints = dataPoints.map((d, i) => {
-            const c = getCoords(d.profit, i);
-            return `${c.x},${c.y}`;
-        }).join(" ");
-
         const widthPerPoint = 100 / dataPoints.length;
 
         // Tooltip Positioning Handler
         const handleMouseEnter = (e, pt, i) => {
             const rect = e.currentTarget.getBoundingClientRect();
-            // Position: Center of the trigger bar, slight offset up
             const x = rect.left + rect.width / 2;
             const y = rect.top;
-
             setTooltipPos({ x, y });
             setHoveredData({ ...pt, index: i });
-        };
-
-        const handleMouseMove = (e) => {
-            // Optional: Mouse follow logic if strict rect positioning isn't enough
-            // But the user's snippet suggested rect-based top and mouse-based left.
-            // For smoother UX in React, strict rect-based (above the bar) is often more stable 
-            // than following the mouse pixel-by-pixel which can cause jitter. 
-            // I'll stick to the stable rect-based positioning established in handleMouseEnter for now,
-            // as it prevents the tooltip from covering the cursor.
         };
 
         return (
@@ -88,9 +87,9 @@ export function ProductManagement({ t }) {
                     <line x1="0" y1={PLOT_HEIGHT * 0.75} x2="100" y2={PLOT_HEIGHT * 0.75} stroke="#f3f4f6" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />
                     <line x1="0" y1={PLOT_HEIGHT} x2="100" y2={PLOT_HEIGHT} stroke="#e5e7eb" strokeWidth="1" vectorEffect="non-scaling-stroke" />
 
-                    {/* X-Axis Labels (Every 3rd point logic) */}
+                    {/* X-Axis Labels */}
                     {dataPoints.map((d, i) => {
-                        if (i % 3 === 0 || i === dataPoints.length - 1) {
+                        if (i % 5 === 0 || i === dataPoints.length - 1) {
                             const xAnchor = i === 0 ? "start" : (i === dataPoints.length - 1 ? "end" : "middle");
                             const xPos = (i / (dataPoints.length - 1)) * 100;
                             return (
@@ -108,11 +107,8 @@ export function ProductManagement({ t }) {
                         return null;
                     })}
 
-                    {/* Profit Area & Line */}
-                    <polygon fill="rgba(16, 185, 129, 0.1)" points={`0,${PLOT_HEIGHT} ${profitPoints} 100,${PLOT_HEIGHT}`} />
-                    <polyline fill="none" stroke="#10b981" strokeWidth="2" points={profitPoints} vectorEffect="non-scaling-stroke" />
-
-                    {/* Price Line */}
+                    {/* Price Area & Line */}
+                    <polygon fill="rgba(99, 102, 241, 0.1)" points={`0,${PLOT_HEIGHT} ${pricePoints} 100,${PLOT_HEIGHT}`} />
                     <polyline fill="none" stroke="#6366f1" strokeWidth="2" points={pricePoints} vectorEffect="non-scaling-stroke" />
 
                     {/* Hover Cursor Line */}
@@ -148,24 +144,16 @@ export function ProductManagement({ t }) {
                 {/* Portal Tooltip */}
                 {hoveredData && createPortal(
                     <div
-                        className="fixed z-[9999] bg-gray-900/95 backdrop-blur-sm text-white text-[10px] rounded-lg p-3 shadow-xl pointer-events-none min-w-[140px] border border-gray-700/50"
+                        className="fixed z-[9999] bg-gray-900/95 backdrop-blur-sm text-white text-[10px] rounded-lg p-3 shadow-xl pointer-events-none min-w-[120px] border border-gray-700/50"
                         style={{
-                            top: tooltipPos.y - 120, // Position above the cursor area
-                            left: tooltipPos.x - 70, // Center alignment (140px / 2)
+                            top: tooltipPos.y - 80,
+                            left: tooltipPos.x - 60,
                         }}
                     >
                         <div className="font-bold text-gray-300 border-b border-gray-700 pb-1 mb-1">{hoveredData.date}</div>
                         <div className="flex justify-between items-center gap-3">
                             <span className="text-indigo-300 flex items-center gap-1"><div className="w-1.5 h-1.5 rounded-full bg-indigo-400"></div> Fiyat:</span>
                             <span className="font-bold">₺{hoveredData.price}</span>
-                        </div>
-                        <div className="flex justify-between items-center gap-3">
-                            <span className="text-emerald-400 flex items-center gap-1"><div className="w-1.5 h-1.5 rounded-full bg-emerald-400"></div> Net Kâr:</span>
-                            <span className="font-bold">₺{hoveredData.profit}</span>
-                        </div>
-                        <div className="flex justify-between items-center gap-3 mt-1 pt-1 border-t border-gray-700 border-dashed">
-                            <span className="text-gray-400">Marj:</span>
-                            <span className="font-bold text-white">%{hoveredData.margin}</span>
                         </div>
                         {/* Down Arrow */}
                         <div className="absolute -bottom-1 left-1/2 transform -translate-x-1/2 w-2 h-2 bg-gray-900 rotate-45 border-r border-b border-gray-700/50"></div>
@@ -189,6 +177,21 @@ export function ProductManagement({ t }) {
     // AI Studio Modal State
     const [isStudioModalOpen, setIsStudioModalOpen] = useState(false);
     const [studioPrompt, setStudioPrompt] = useState("");
+
+    // Cost Breakdown Modal State
+    const [isCostModalOpen, setIsCostModalOpen] = useState(false);
+
+    // Bulk Operations State
+    const [selectedIds, setSelectedIds] = useState([]);
+    const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
+    const [bulkScope, setBulkScope] = useState('selected'); // 'selected' or 'all'
+    const [bulkAction, setBulkAction] = useState('cost');
+    const [bulkCostBreakdown, setBulkCostBreakdown] = useState([
+        { id: 'initial-bulk-1', name: 'Ürün Temel Maliyeti', value: 0 }
+    ]);
+    
+    // Persistent Cost Overrides map: { [productId]: { costPrice, costBreakdown } }
+    const [costOverrides, setCostOverrides] = useState({});
 
     const openStudioModal = () => {
         setStudioPrompt("");
@@ -281,20 +284,96 @@ export function ProductManagement({ t }) {
     };
 
     const filteredProducts = products.filter(product => {
-        const matchesSearch =
+        // 1. Düz Metin Araması
+        const matchesSearch = !searchTerm || (
             (product.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
             (product.sku || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-            (product.brand || '').toLowerCase().includes(searchTerm.toLowerCase());
+            (product.brand || '').toLowerCase().includes(searchTerm.toLowerCase())
+        );
 
-        return matchesSearch;
+        // 2. Gelişmiş Filtreler
+        const matchesAdvanced = activeFilters.every(filter => {
+            if (!filter.value) return true;
+            
+            let productValue = '';
+            if (filter.field === 'category') {
+                productValue = (product.category || '').toLowerCase();
+            } else if (filter.field === 'brand') {
+                productValue = (product.brand || '').toLowerCase();
+            }
+
+            const filterValue = filter.value.toLowerCase();
+
+            if (filter.operator === 'contains') {
+                return productValue.includes(filterValue);
+            } else if (filter.operator === 'not_contains') {
+                return !productValue.includes(filterValue);
+            } else if (filter.operator === 'equals') {
+                return productValue === filterValue;
+            } else if (filter.operator === 'not_equals') {
+                return productValue !== filterValue;
+            }
+            return true;
+        });
+
+        return matchesSearch && matchesAdvanced;
     });
+
+    // --- Advanced Filtering Logs ---
+    const handleAddFilterRow = () => {
+        setTempFilters(prev => [...prev, { id: Date.now().toString(), field: 'category', operator: 'contains', value: '' }]);
+    };
+    const handleUpdateFilterRow = (id, key, value) => {
+        setTempFilters(prev => prev.map(f => f.id === id ? { ...f, [key]: value } : f));
+    };
+    const handleRemoveFilterRow = (id) => {
+        setTempFilters(prev => prev.filter(f => f.id !== id));
+    };
+    const handleApplyFilters = () => {
+        setActiveFilters([...tempFilters]);
+        setIsFilterMenuOpen(false);
+    };
+    const handleClearFilters = () => {
+        const cleanState = [{ id: Date.now().toString(), field: 'category', operator: 'contains', value: '' }];
+        setTempFilters(cleanState);
+        setActiveFilters([]);
+        setIsFilterMenuOpen(false);
+    };
+
+    const handleSelectAll = (e) => {
+        if (e.target.checked) {
+            setSelectedIds(filteredProducts.map(p => p.id));
+        } else {
+            setSelectedIds([]);
+        }
+    };
+
+    const handleSelectOne = (e, id) => {
+        e.stopPropagation();
+        if (e.target.checked) {
+            setSelectedIds(prev => [...prev, id]);
+        } else {
+            setSelectedIds(prev => prev.filter(item => item !== id));
+        }
+    };
 
     const handleProductClick = (product) => {
         // STOCK LOGIC: Now pulled natively from Ikas via useIkasProducts
         const reserved = product.reserved || 0;
         const available = product.available || product.stock || 0;
         const supplier = "—";
-        const costPrice = 0;
+        const override = costOverrides[product.id];
+        const costPrice = override ? override.costPrice : Math.round((product.price || 0) * 0.25);
+        const kdv = (product.price || 0) - ((product.price || 0) / 1.20);
+        const commission = (product.price || 0) * 0.02; // Web komisyonu
+        const shipping = 45; // Kargo
+        const netProfitValue = (product.price || 0) - costPrice - kdv - commission - shipping;
+        const netProfit = Math.round(netProfitValue);
+        const margin = ((netProfit / (product.price || 1)) * 100).toFixed(1);
+
+        const costBreakdown = override ? override.costBreakdown : [
+            { id: 'initial-1', name: 'Ürün Temel Maliyeti', value: costPrice }
+        ];
 
         // SALES LOGIC (Calculated from real useOrders data)
         const thirtyDaysAgo = new Date();
@@ -318,9 +397,9 @@ export function ProductManagement({ t }) {
 
         const dailySalesAverage = sales30Days / 30;
 
-        // Calculate Last 7 Days grouped array for the sparkline chart
-        const last7DaysSales = [];
-        for (let i = 6; i >= 0; i--) {
+        // Calculate Last 30 Days grouped array for the sparkline chart
+        const last30DaysSalesArray = [];
+        for (let i = 29; i >= 0; i--) {
             const date = new Date();
             date.setDate(date.getDate() - i);
             date.setHours(0,0,0,0);
@@ -332,7 +411,7 @@ export function ProductManagement({ t }) {
                 return oDate >= date && oDate < nextDate;
             }).length;
             
-            last7DaysSales.push(salesThatDay);
+            last30DaysSalesArray.push(salesThatDay);
         }
 
         const enrichedProduct = {
@@ -341,13 +420,29 @@ export function ProductManagement({ t }) {
             available,
             sales30Days,
             dailySalesAverage,
-            last7DaysSales,
+            salesLast30DaysArray: last30DaysSalesArray,
             supplier,
             costPrice,
+            costBreakdown: [
+                { id: 'initial-1', name: 'Ürün Temel Maliyeti', value: costPrice }
+            ],
+            netProfit,
+            margin,
+            // 30-Day Realistic Price History Array (Flat since no actual historical APIs are imported yet)
+            history: Array.from({ length: 30 }).map((_, i) => {
+                const d = new Date();
+                d.setDate(d.getDate() - (29 - i));
+                const dateStr = d.toLocaleDateString('tr-TR', { day: '2-digit', month: 'short' });
+                const basePrice = product.price || 150;
+                return {
+                    date: dateStr,
+                    price: Math.round(basePrice)
+                };
+            }),
             // 1. Competitor Data (Mock)
             competitorPrice: product.price, 
             // 2. Velocity Data (Real)
-            salesLast3Days: last7DaysSales.slice(-3).reduce((a, b) => a + b, 0),
+            salesLast3Days: last30DaysSalesArray.slice(-3).reduce((a, b) => a + b, 0),
             salesLast30Days: sales30Days, 
             // 3. Store Data (Mock)
             storeTotalRevenue: 0,
@@ -389,6 +484,90 @@ export function ProductManagement({ t }) {
         }
     };
 
+    // --- Cost Modal Logics ---
+    // Single Product
+    const handleAddCostItem = () => {
+        if (!selectedProduct) return;
+        const newItem = { id: Date.now().toString(), name: '', value: 0 };
+        const newBreakdown = [...(selectedProduct.costBreakdown || []), newItem];
+        recalculateProductMaliyet(newBreakdown);
+    };
+
+    const handleUpdateCostItem = (id, field, value) => {
+        if (!selectedProduct) return;
+        const newBreakdown = (selectedProduct.costBreakdown || []).map(item => 
+            item.id === id ? { ...item, [field]: value } : item
+        );
+        recalculateProductMaliyet(newBreakdown);
+    };
+
+    const handleRemoveCostItem = (id) => {
+        if (!selectedProduct) return;
+        const newBreakdown = (selectedProduct.costBreakdown || []).filter(item => item.id !== id);
+        recalculateProductMaliyet(newBreakdown);
+    };
+
+    const recalculateProductMaliyet = (newBreakdown) => {
+        const newTotalCost = newBreakdown.reduce((sum, item) => sum + (Number(item.value) || 0), 0);
+        const price = selectedProduct.price || 0;
+        const kdv = price - (price / 1.20);
+        const commission = price * 0.02;
+        const shipping = 45;
+        const netProfitValue = price - newTotalCost - kdv - commission - shipping;
+        const netProfit = Math.round(netProfitValue);
+        const margin = ((netProfit / (price || 1)) * 100).toFixed(1);
+
+        const currentOverrides = { ...costOverrides };
+        currentOverrides[selectedProduct.id] = {
+             costBreakdown: newBreakdown,
+             costPrice: newTotalCost
+        };
+        setCostOverrides(currentOverrides);
+
+        setSelectedProduct({
+            ...selectedProduct,
+            costBreakdown: newBreakdown,
+            costPrice: newTotalCost,
+            netProfit,
+            margin
+        });
+    };
+
+    // Bulk Products
+    const handleAddBulkCostItem = () => {
+        const newItem = { id: Date.now().toString(), name: '', value: 0 };
+        setBulkCostBreakdown(prev => [...prev, newItem]);
+    };
+
+    const handleUpdateBulkCostItem = (id, field, value) => {
+        setBulkCostBreakdown(prev => prev.map(item => 
+            item.id === id ? { ...item, [field]: value } : item
+        ));
+    };
+
+    const handleRemoveBulkCostItem = (id) => {
+        setBulkCostBreakdown(prev => prev.filter(item => item.id !== id));
+    };
+
+    const applyBulkCostOverrides = () => {
+        const targetIds = bulkScope === 'selected' ? selectedIds : filteredProducts.map(p => p.id);
+        const newTotalCost = bulkCostBreakdown.reduce((sum, item) => sum + (Number(item.value) || 0), 0);
+        
+        const newOverrides = { ...costOverrides };
+        targetIds.forEach(id => {
+            newOverrides[id] = {
+                costBreakdown: [...bulkCostBreakdown],
+                costPrice: newTotalCost
+            };
+        });
+
+        setCostOverrides(newOverrides);
+        setIsBulkModalOpen(false);
+        if (bulkScope === 'selected') {
+            setSelectedIds([]);
+        }
+    };
+
     return (
         <div className="p-6 max-w-[1600px] mx-auto space-y-6">
 
@@ -412,29 +591,134 @@ export function ProductManagement({ t }) {
                         </div>
                     </div>
 
-                    <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-                        <div className="border-b border-gray-200 bg-gray-50 px-4 py-3 sm:px-6 flex items-center">
-                            <div className="relative w-full max-w-md">
-                                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                                    <svg className="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
-                                        <path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clipRule="evenodd" />
-                                    </svg>
+                    <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-visible">
+                        <div className="border-b border-gray-200 bg-gray-50 px-4 py-3 sm:px-6 flex items-center relative z-20">
+                            <div className="relative w-full max-w-md flex items-center gap-2">
+                                <div className="relative flex-1">
+                                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                                        <svg className="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clipRule="evenodd" />
+                                        </svg>
+                                    </div>
+                                    <input
+                                        type="text"
+                                        placeholder="Ürün adı, SKU veya marka ara..."
+                                        className="block w-full rounded-md border-0 py-1.5 pl-10 text-gray-900 ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm sm:leading-6 transition-all"
+                                        value={searchTerm}
+                                        onChange={(e) => setSearchTerm(e.target.value)}
+                                    />
                                 </div>
-                                <input
-                                    type="text"
-                                    placeholder="Ürün adı, SKU veya marka ara..."
-                                    className="block w-full rounded-md border-0 py-1.5 pl-10 text-gray-900 ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm sm:leading-6"
-                                    value={searchTerm}
-                                    onChange={(e) => setSearchTerm(e.target.value)}
-                                />
+                                <button 
+                                    onClick={() => setIsFilterMenuOpen(!isFilterMenuOpen)}
+                                    className={`relative flex items-center gap-2 px-3 py-1.5 border rounded-md text-sm font-medium transition-colors ${activeFilters.length > 0 ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                                >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>
+                                    Filtre
+                                    {activeFilters.length > 0 && (
+                                        <span className="absolute -top-1.5 -right-1.5 bg-indigo-600 text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">
+                                            {activeFilters.length}
+                                        </span>
+                                    )}
+                                </button>
+                                
+                                {/* Filter Popover */}
+                                {isFilterMenuOpen && (
+                                    <div className="absolute top-full left-0 mt-2 w-[600px] bg-white rounded-xl shadow-xl border border-gray-100 p-4 z-50 origin-top-left animate-fadeIn">
+                                        <div className="space-y-3">
+                                            {tempFilters.map((f, i) => (
+                                                <div key={f.id} className="flex flex-wrap items-center gap-2">
+                                                    <select 
+                                                        className="flex-1 w-32 border-gray-300 text-sm rounded-lg focus:ring-indigo-500 py-2"
+                                                        value={f.field}
+                                                        onChange={(e) => handleUpdateFilterRow(f.id, 'field', e.target.value)}
+                                                    >
+                                                        <option value="category">Kategori</option>
+                                                        <option value="brand">Marka</option>
+                                                    </select>
+                                                    <select 
+                                                        className="flex-1 w-28 border-gray-300 text-sm rounded-lg focus:ring-indigo-500 py-2"
+                                                        value={f.operator}
+                                                        onChange={(e) => handleUpdateFilterRow(f.id, 'operator', e.target.value)}
+                                                    >
+                                                        <option value="contains">içeren</option>
+                                                        <option value="not_contains">içermeyen</option>
+                                                        <option value="equals">eşittir</option>
+                                                        <option value="not_equals">eşit değildir</option>
+                                                    </select>
+                                                    <select 
+                                                        className="flex-[2] border-gray-300 text-sm rounded-lg focus:ring-indigo-500 py-2"
+                                                        value={f.value}
+                                                        onChange={(e) => handleUpdateFilterRow(f.id, 'value', e.target.value)}
+                                                    >
+                                                        <option value="">Seçiniz</option>
+                                                        {f.field === 'category' 
+                                                            ? availableCategories.map(c => <option key={c} value={c}>{c}</option>)
+                                                            : availableBrands.map(b => <option key={b} value={b}>{b}</option>)
+                                                        }
+                                                    </select>
+                                                    <button 
+                                                        onClick={() => handleRemoveFilterRow(f.id)}
+                                                        className="p-2 text-gray-400 hover:text-red-500 transition-colors"
+                                                    >
+                                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        
+                                        <div className="flex items-center justify-between mt-5 pt-4 border-t border-gray-100">
+                                            <button 
+                                                onClick={handleAddFilterRow}
+                                                className="text-indigo-600 font-medium text-sm flex items-center gap-1 hover:text-indigo-800"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
+                                                Filtre Ekle
+                                            </button>
+                                            <div className="flex gap-2">
+                                                <button 
+                                                    onClick={handleClearFilters}
+                                                    className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors"
+                                                >
+                                                    Temizle
+                                                </button>
+                                                <button 
+                                                    onClick={handleApplyFilters}
+                                                    className="px-6 py-2 text-sm font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 rounded-lg transition-colors"
+                                                >
+                                                    Uygula
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
+                            
+                            {selectedIds.length > 0 && (
+                                <div className="ml-4 flex items-center shrink-0 border-l border-gray-200 pl-4 h-8 animate-fadeIn">
+                                    <button
+                                        onClick={() => setIsBulkModalOpen(true)}
+                                        className="px-4 py-1.5 bg-gray-900 border border-gray-900 text-white rounded-lg text-sm font-bold shadow hover:bg-gray-800 flex items-center gap-2 transition-colors"
+                                    >
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                        {selectedIds.length} Ürünü Düzenle
+                                    </button>
+                                </div>
+                            )}
                         </div>
 
                         <div className="overflow-x-auto">
                             <table className="min-w-full divide-y divide-gray-300">
-                                <thead className="bg-gray-50">
+                                <thead className="bg-gray-50 border-b border-gray-200">
                                     <tr>
-                                        <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-xs font-bold uppercase tracking-wide text-gray-500 sm:pl-6">Ürün Detayı</th>
+                                        <th scope="col" className="px-4 py-3.5 w-12 text-center align-middle">
+                                            <input 
+                                                type="checkbox" 
+                                                className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600 cursor-pointer"
+                                                checked={filteredProducts.length > 0 && selectedIds.length === filteredProducts.length}
+                                                onChange={handleSelectAll}
+                                            />
+                                        </th>
+                                        <th scope="col" className="py-3.5 pl-2 pr-3 text-left text-xs font-bold uppercase tracking-wide text-gray-500 sm:pl-4">Ürün Detayı</th>
                                         <th scope="col" className="px-3 py-3.5 text-left text-xs font-bold uppercase tracking-wide text-gray-500">Kategori</th>
                                         <th scope="col" className="px-3 py-3.5 text-left text-xs font-bold uppercase tracking-wide text-gray-500">Marka</th>
                                         <th scope="col" className="px-3 py-3.5 text-left text-xs font-bold uppercase tracking-wide text-gray-500">SKU / ID</th>
@@ -470,8 +754,16 @@ export function ProductManagement({ t }) {
                                     ) : filteredProducts.map((item) => (
                                         <React.Fragment key={item.id}>
                                             <tr className="hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-0 relative z-10">
+                                                <td className="px-4 py-4 w-12 text-center align-middle" onClick={(e) => e.stopPropagation()}>
+                                                    <input 
+                                                        type="checkbox" 
+                                                        className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600 cursor-pointer"
+                                                        checked={selectedIds.includes(item.id)}
+                                                        onChange={(e) => handleSelectOne(e, item.id)}
+                                                    />
+                                                </td>
                                                 <td
-                                                    className="whitespace-nowrap py-4 pl-4 pr-3 sm:pl-6 cursor-pointer"
+                                                    className="whitespace-nowrap py-4 pl-2 pr-3 sm:pl-4 cursor-pointer"
                                                     onClick={() => handleProductClick(item)}
                                                 >
                                                     <div className="flex items-center group">
@@ -857,13 +1149,8 @@ export function ProductManagement({ t }) {
                                     <span className="text-xs text-gray-500 font-medium">Kullanılabilir</span>
                                 </div>
 
-                                <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden mb-3">
+                                <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
                                     <div id="detail-stock-bar" className="h-full bg-indigo-600 rounded-full" style={{ width: `${Math.min((selectedProduct.available / 500) * 100, 100)}%` }}></div>
-                                </div>
-
-                                <div className="flex justify-between text-[10px] text-gray-500">
-                                    <span>Fiziksel: <strong id="detail-stock-total" className="text-gray-900">{selectedProduct.stock}</strong></span>
-                                    <span>Rezerve: <strong id="detail-stock-reserved" className="text-orange-600">{selectedProduct.reserved}</strong></span>
                                 </div>
                             </div>
 
@@ -871,7 +1158,7 @@ export function ProductManagement({ t }) {
                                 <div className="flex justify-between items-start mb-2">
                                     <div>
                                         <h3 className="text-sm font-bold text-gray-900">Satış Hızı</h3>
-                                        <p className="text-[10px] text-gray-400">Son 7 Günlük İvme</p>
+                                        <p className="text-[10px] text-gray-400">Son 30 Günlük İvme</p>
                                     </div>
                                     <span className="bg-purple-50 text-purple-700 px-2 py-0.5 rounded text-[10px] font-bold">Yüksek</span>
                                 </div>
@@ -882,19 +1169,19 @@ export function ProductManagement({ t }) {
                                         <span className="text-[10px] text-gray-500 block">Toplam Satış</span>
                                     </div>
                                     <div className="text-right">
-                                        <span id="detail-sales-daily" className="text-sm font-bold text-gray-700">{selectedProduct.dailySalesAverage}</span>
+                                        <span id="detail-sales-daily" className="text-sm font-bold text-gray-700">{selectedProduct.dailySalesAverage?.toFixed(2) || 0}</span>
                                         <span className="text-[10px] text-gray-400 block uppercase">Günlük Ort.</span>
                                     </div>
                                 </div>
 
-                                <div className="relative mt-4 h-16 w-full flex items-end justify-between gap-1" id="detail-sales-chart-bars">
+                                <div className="relative mt-4 h-16 w-full flex items-end justify-between gap-[1px]" id="detail-sales-chart-bars">
                                     {(() => {
-                                        const salesData = selectedProduct.last7DaysSales || [];
+                                        const salesData = selectedProduct.salesLast30DaysArray || [];
                                         const maxSale = Math.max(...salesData, 1);
-                                        return (salesData.length ? salesData : Array(7).fill(0)).map((val, index) => {
-                                            const heightPercent = Math.max(15, (val / maxSale) * 100);
+                                        return (salesData.length ? salesData : Array(30).fill(0)).map((val, index) => {
+                                            const heightPercent = Math.max(8, (val / maxSale) * 100);
                                             return (
-                                                <div key={index} className="flex-1 bg-purple-200 rounded-t-sm hover:bg-purple-500 transition-colors" style={{ height: `${heightPercent}%` }}></div>
+                                                <div key={index} className="flex-1 bg-purple-200 rounded-t-[1px] hover:bg-purple-500 transition-colors" style={{ height: `${heightPercent}%` }} title={`Satış: ${val}`}></div>
                                             );
                                         });
                                     })()}
@@ -907,10 +1194,23 @@ export function ProductManagement({ t }) {
                                     <span className="text-[10px] bg-green-50 text-green-700 px-2 py-0.5 rounded font-bold">Kârlı</span>
                                 </div>
 
-                                <div className="grid grid-cols-3 gap-2 mb-4">
+                                <div className="grid grid-cols-4 gap-2 mb-4">
                                     <div className="text-center p-2 bg-gray-50 rounded border border-gray-100">
                                         <span className="block text-[9px] text-gray-400 uppercase">Fiyat</span>
                                         <span id="detail-price-current" className="text-xs font-bold text-gray-900">₺{selectedProduct.price}</span>
+                                    </div>
+                                    <div 
+                                        className="text-center p-2 bg-indigo-50/30 rounded border border-indigo-200 border-dashed hover:bg-indigo-50 transition-colors group relative cursor-pointer"
+                                        onClick={() => setIsCostModalOpen(true)}
+                                    >
+                                        <label className="block text-[9px] text-indigo-500 uppercase font-bold cursor-pointer flex items-center justify-center gap-1">
+                                            Maliyet
+                                            <svg className="w-2.5 h-2.5 opacity-50 group-hover:opacity-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                                        </label>
+                                        <div className="flex items-center justify-center mt-0.5 pointer-events-none">
+                                            <span className="text-xs font-bold text-gray-400 mr-0.5">₺</span>
+                                            <span className="w-12 text-xs font-extrabold text-indigo-700 bg-transparent text-center p-0">{selectedProduct.costPrice}</span>
+                                        </div>
                                     </div>
                                     <div className="text-center p-2 bg-emerald-50 rounded border border-emerald-100">
                                         <span className="block text-[9px] text-emerald-600 uppercase">Kâr</span>
@@ -922,7 +1222,10 @@ export function ProductManagement({ t }) {
                                     </div>
                                 </div>
 
-                                <div id="chart-wrapper" className="relative h-24 w-full bg-white rounded border border-gray-100 overflow-hidden">
+                                <div className="mt-2 text-[10px] font-bold text-gray-400 uppercase tracking-wider pl-1">
+                                    Satış Fiyatı Geçmişi (30 Gün)
+                                </div>
+                                <div id="chart-wrapper" className="relative h-28 w-full bg-white rounded-lg border border-gray-100 overflow-visible mt-1">
                                     <div id="detail-price-chart" className="absolute inset-0 h-full w-full" style={{ isolation: 'isolate' }}>
                                         {renderChart()}
                                     </div>
@@ -1050,9 +1353,229 @@ export function ProductManagement({ t }) {
                             </div>
                         </div>
                     )}
-
                 </div>
             )}
+
+            {/* Cost Breakdown Modal */}
+            {isCostModalOpen && (
+                <div className="fixed inset-0 z-50 overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+                    <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                        <div className="fixed inset-0 bg-gray-900 bg-opacity-75 transition-opacity" aria-hidden="true" onClick={() => setIsCostModalOpen(false)}></div>
+                        <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+                        <div className="inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg w-full">
+                            <div className="bg-white px-6 pt-6 pb-4">
+                                <div className="flex justify-between items-center mb-5">
+                                    <div>
+                                        <h3 className="text-lg font-bold text-gray-900" id="modal-title">Birim Maliyet Kırılımları</h3>
+                                        <p className="text-xs text-gray-500 mt-1">Ürünün tüm maliyet kalemlerini manuel olarak ekleyebilirsiniz.</p>
+                                    </div>
+                                    <button onClick={() => setIsCostModalOpen(false)} className="text-gray-400 hover:text-gray-500 transition-colors">
+                                        <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                                        </svg>
+                                    </button>
+                                </div>
+
+                                <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-2">
+                                    {(selectedProduct?.costBreakdown || []).map((item, index) => (
+                                        <div key={item.id} className="flex items-center gap-3 bg-gray-50 p-2.5 rounded-xl border border-gray-100 relative group animate-fadeIn">
+                                            <div className="flex-1">
+                                                <input 
+                                                    type="text" 
+                                                    className="w-full bg-transparent border-none text-sm font-medium text-gray-900 focus:ring-0 p-0" 
+                                                    placeholder="Maliyet Kalemi..."
+                                                    value={item.name}
+                                                    onChange={(e) => handleUpdateCostItem(item.id, 'name', e.target.value)}
+                                                />
+                                            </div>
+                                            <div className="flex items-center gap-1 w-28 shrink-0 relative bg-white px-2 py-1 rounded-xl border border-gray-200 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500 transition-shadow">
+                                                <span className="text-gray-400 text-sm font-bold">₺</span>
+                                                <input 
+                                                    type="number" 
+                                                    className="w-full border-none p-0 text-right text-sm font-extrabold text-indigo-700 focus:ring-0" 
+                                                    value={item.value === 0 ? '' : item.value}
+                                                    onChange={(e) => handleUpdateCostItem(item.id, 'value', e.target.value)}
+                                                    placeholder="0"
+                                                />
+                                            </div>
+                                            <button 
+                                                onClick={() => handleRemoveCostItem(item.id)}
+                                                className="text-gray-300 hover:text-red-500 transition-colors p-1"
+                                                title="Sil"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <button 
+                                    onClick={handleAddCostItem}
+                                    className="mt-5 w-full flex items-center justify-center gap-2 py-3.5 border-2 border-dashed border-indigo-200 text-indigo-600 font-bold rounded-xl hover:bg-indigo-50 hover:border-indigo-300 transition-colors"
+                                >
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
+                                    Yeni Maliyet Ekle
+                                </button>
+                            </div>
+                            <div className="bg-gray-50 px-6 py-4 flex items-center justify-between border-t border-gray-100">
+                                <div className="flex items-center gap-2">
+                                    <span className="text-sm font-medium text-gray-500">Toplam Maliyet:</span>
+                                    <span className="text-xl font-black text-indigo-600">₺{selectedProduct?.costPrice}</span>
+                                </div>
+                                <button 
+                                    onClick={() => setIsCostModalOpen(false)}
+                                    className="px-6 py-2.5 bg-gray-900 text-white font-bold text-sm rounded-xl hover:bg-gray-800 transition-colors shadow-sm"
+                                >
+                                    Kaydet ve Uygula
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Bulk Edit Modal */}
+            {isBulkModalOpen && (
+                <div className="fixed inset-0 z-[110] overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+                    <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                        <div className="fixed inset-0 bg-gray-900 bg-opacity-75 transition-opacity" aria-hidden="true" onClick={() => setIsBulkModalOpen(false)}></div>
+                        <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+                        <div className="inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl w-full">
+                            
+                            {/* Header */}
+                            <div className="bg-white px-6 pt-6 pb-4 border-b border-gray-100 flex justify-between items-center">
+                                <div className="flex items-center gap-2">
+                                    <h3 className="text-xl font-bold text-gray-900" id="modal-title">
+                                        {bulkScope === 'selected' ? `${selectedIds.length} Ürünü Düzenle` : `${filteredProducts.length} Ürünü Düzenle`}
+                                    </h3>
+                                    <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                </div>
+                                <button onClick={() => setIsBulkModalOpen(false)} className="text-gray-400 hover:text-gray-500 transition-colors">
+                                    <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <div className="px-6 py-6 space-y-8 bg-gray-50/30">
+                                {/* Scope Selection */}
+                                <div>
+                                    <h4 className="text-sm font-semibold text-gray-500 mb-3">Hangi ürünlerinizi düzenleyeceksiniz seçin</h4>
+                                    <div className="space-y-3">
+                                        <label className="flex items-center gap-3 cursor-pointer group">
+                                            <div className="relative flex items-center justify-center">
+                                                <input 
+                                                    type="radio" 
+                                                    name="bulkScope" 
+                                                    value="all" 
+                                                    className="w-5 h-5 border-gray-300 text-indigo-600 focus:ring-indigo-600 peer"
+                                                    checked={bulkScope === 'all'}
+                                                    onChange={() => setBulkScope('all')}
+                                                />
+                                            </div>
+                                            <span className="text-gray-700 font-medium group-hover:text-gray-900 transition-colors">Tüm Ürünler ({filteredProducts.length})</span>
+                                        </label>
+                                        <label className="flex items-center gap-3 cursor-pointer group">
+                                            <div className="relative flex items-center justify-center">
+                                                <input 
+                                                    type="radio" 
+                                                    name="bulkScope" 
+                                                    value="selected" 
+                                                    className="w-5 h-5 border-gray-300 text-indigo-600 focus:ring-indigo-600 peer"
+                                                    checked={bulkScope === 'selected'}
+                                                    onChange={() => setBulkScope('selected')}
+                                                />
+                                            </div>
+                                            <span className="text-gray-700 font-medium group-hover:text-gray-900 transition-colors">Seçilen {selectedIds.length} ürün</span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                {/* Action Selection */}
+                                <div>
+                                    <h4 className="text-sm font-semibold text-gray-500 mb-3">Seçili ürünleri düzenlemek için işlem ekleyin</h4>
+                                    <select 
+                                        className="w-full bg-white border border-gray-300 text-gray-900 text-sm rounded-xl focus:ring-indigo-500 focus:border-indigo-500 block p-3.5 shadow-sm outline-none"
+                                        value={bulkAction}
+                                        onChange={(e) => setBulkAction(e.target.value)}
+                                    >
+                                        <option disabled value="">İşlem Ekle</option>
+                                        <option value="cost">Maliyet Düzenle</option>
+                                    </select>
+                                </div>
+                                
+                                {/* Dynamic Content based on selected action (For now only Cost) */}
+                                {bulkAction === 'cost' && (
+                                    <div className="mt-4 border border-indigo-100 bg-white rounded-xl p-5 shadow-sm animate-fadeIn">
+                                        <div className="flex justify-between items-center mb-4">
+                                            <h4 className="font-bold text-gray-900">Toplu Maliyet Kırılımları</h4>
+                                            <span className="text-xs bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-md font-bold">Uygulanacak {bulkScope === 'selected' ? selectedIds.length : filteredProducts.length} Ürün</span>
+                                        </div>
+                                        
+                                        <div className="space-y-3 max-h-[40vh] overflow-y-auto pr-2">
+                                            {bulkCostBreakdown.map((item, index) => (
+                                                <div key={item.id} className="flex items-center gap-3 bg-gray-50 p-2.5 rounded-xl border border-gray-100 relative group animate-fadeIn">
+                                                    <div className="flex-1">
+                                                        <input 
+                                                            type="text" 
+                                                            className="w-full bg-transparent border-none text-sm font-medium text-gray-900 focus:ring-0 p-0" 
+                                                            placeholder="Maliyet Kalemi..."
+                                                            value={item.name}
+                                                            onChange={(e) => handleUpdateBulkCostItem(item.id, 'name', e.target.value)}
+                                                        />
+                                                    </div>
+                                                    <div className="flex items-center gap-1 w-28 shrink-0 relative bg-white px-2 py-1 rounded-xl border border-gray-200 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500 transition-shadow">
+                                                        <span className="text-gray-400 text-sm font-bold">₺</span>
+                                                        <input 
+                                                            type="number" 
+                                                            className="w-full border-none p-0 text-right text-sm font-extrabold text-indigo-700 focus:ring-0" 
+                                                            value={item.value === 0 && index === (bulkCostBreakdown.length-1) ? '' : item.value}
+                                                            onChange={(e) => handleUpdateBulkCostItem(item.id, 'value', e.target.value)}
+                                                            placeholder="0"
+                                                        />
+                                                    </div>
+                                                    <button 
+                                                        onClick={() => handleRemoveBulkCostItem(item.id)}
+                                                        className="text-gray-300 hover:text-red-500 transition-colors p-1"
+                                                        title="Sil"
+                                                    >
+                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                    </button>
+                                                </div>
+                                            ))}
+                                            <button 
+                                                onClick={handleAddBulkCostItem}
+                                                className="mt-3 w-full flex items-center justify-center gap-2 py-3 border-2 border-dashed border-indigo-200 text-indigo-600 font-bold rounded-xl hover:bg-indigo-50 hover:border-indigo-300 transition-colors"
+                                            >
+                                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
+                                                Yeni Maliyet Ekle
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Footer */}
+                            <div className="bg-white px-6 py-5 flex items-center justify-end gap-3 border-t border-gray-100">
+                                <button 
+                                    onClick={() => setIsBulkModalOpen(false)}
+                                    className="px-6 py-2.5 bg-white border border-gray-300 text-gray-700 font-bold text-sm rounded-xl hover:bg-gray-50 transition-colors"
+                                >
+                                    Vazgeç
+                                </button>
+                                <button 
+                                    onClick={applyBulkCostOverrides}
+                                    disabled={bulkAction !== 'cost' || (bulkScope === 'selected' && selectedIds.length === 0)}
+                                    className="px-6 py-2.5 bg-indigo-600 text-white font-bold text-sm rounded-xl hover:bg-indigo-500 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    Kaydet
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
         </div>
     );
 }

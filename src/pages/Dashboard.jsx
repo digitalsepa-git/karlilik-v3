@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useData } from '../context/DataContext';
 import { useGoogleAnalytics } from '../hooks/useGoogleAnalytics';
 import { expensesData, calculateDailyExpense } from '../data/expensesData';
+import productCosts from '../data/productCosts.json';
 import {
     LineChart,
     Line,
@@ -32,6 +33,13 @@ import {
     Package,
     Wallet,
     Activity,
+    AlertCircle,
+    TrendingDown,
+    ShieldAlert,
+    Sparkles,
+    Zap,
+    CheckCircle2,
+    Swords,
     Info
 } from 'lucide-react';
 import { InventoryInsights } from '../components/dashboard/InventoryInsights';
@@ -83,7 +91,7 @@ const CustomTooltip = ({ active, payload, label }) => {
         // Find if this is the breakeven point
         const isBe = payload[0]?.payload?.isBreakEven;
         const fullPayload = payload[0]?.payload;
-        
+
         return (
             <div className="bg-white p-4 rounded-xl shadow-lg border border-gray-50 text-left min-w-[260px]">
                 {isBe && (
@@ -151,6 +159,17 @@ const CustomTooltip = ({ active, payload, label }) => {
     return null;
 };
 
+
+const toTrtDateString = (dateObj) => {
+    if (!dateObj) return '';
+    const trtTime = new Date(dateObj.getTime() + (3 * 60 * 60 * 1000));
+    return trtTime.toISOString().split('T')[0];
+};
+
+const getTrtMidnightUTC = (year, month, day) => {
+    return new Date(Date.UTC(year, month, day, -3, 0, 0, 0));
+};
+
 export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
     const [isExportOpen, setIsExportOpen] = useState(false);
     const exportRef = useRef(null);
@@ -189,32 +208,37 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
 
     const getDateRangeBounds = (rangeFilter) => {
         const now = new Date();
-        
-        // Form strict TRT (UTC+3) midnight
         const trtNow = new Date(now.getTime() + (3 * 60 * 60 * 1000));
-        const startOfTRTDay = new Date(Date.UTC(trtNow.getUTCFullYear(), trtNow.getUTCMonth(), trtNow.getUTCDate(), -3, 0, 0));
+        const y = trtNow.getUTCFullYear();
+        const m = trtNow.getUTCMonth();
+        const d = trtNow.getUTCDate();
+
+        const startOfTRTDay = getTrtMidnightUTC(y, m, d);
         const endOfTRTDay = new Date(startOfTRTDay.getTime() + (24 * 60 * 60 * 1000) - 1);
 
         switch (rangeFilter) {
             case 'thisMonth':
-                return { start: new Date(now.getFullYear(), now.getMonth(), 1), end: endOfTRTDay };
+                return { start: getTrtMidnightUTC(y, m, 1), end: endOfTRTDay };
             case 'lastQuarter': {
-                const m = now.getMonth();
-                let startMonth, year = now.getFullYear();
+                let startMonth, year = y;
                 if (m === 11 || m === 0 || m === 1) { startMonth = 11; if (m !== 11) year -= 1; }
                 else if (m >= 2 && m <= 4) startMonth = 2;
                 else if (m >= 5 && m <= 7) startMonth = 5;
                 else startMonth = 8;
-                return { start: new Date(year, startMonth, 1), end: endOfTRTDay };
+                return { start: getTrtMidnightUTC(year, startMonth, 1), end: endOfTRTDay };
             }
             case 'thisYear':
-                return { start: new Date(now.getFullYear(), 0, 1), end: endOfTRTDay };
+                return { start: getTrtMidnightUTC(y, 0, 1), end: endOfTRTDay };
             default:
                 if (rangeFilter && rangeFilter.startsWith('custom:')) {
                     const parts = rangeFilter.split(':');
-                    return { start: new Date(parts[1] + 'T00:00:00Z'), end: new Date(parts[2] + 'T23:59:59.999Z') };
+                    const startParts = parts[1].split('-');
+                    const endParts = parts[2].split('-');
+                    const cStart = getTrtMidnightUTC(parseInt(startParts[0]), parseInt(startParts[1]) - 1, parseInt(startParts[2]));
+                    const cEnd = new Date(getTrtMidnightUTC(parseInt(endParts[0]), parseInt(endParts[1]) - 1, parseInt(endParts[2])).getTime() + (24 * 60 * 60 * 1000) - 1);
+                    return { start: cStart, end: cEnd };
                 }
-                return { start: new Date(startOfTRTDay.getTime() - 29 * 24 * 60 * 60 * 1000), end: endOfTRTDay };
+                return { start: getTrtMidnightUTC(y, m, d - 29), end: endOfTRTDay };
         }
     };
 
@@ -222,8 +246,8 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
 
     useEffect(() => {
         setGlobalDateRange({
-            startDate: dateStart.toISOString().split('T')[0],
-            endDate: dateEnd.toISOString().split('T')[0]
+            startDate: toTrtDateString(dateStart),
+            endDate: toTrtDateString(dateEnd)
         });
     }, [dateStart, dateEnd, setGlobalDateRange]);
 
@@ -260,8 +284,8 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
         return { prevStart: pStart, prevEnd: pEnd };
     }, [dateStart, diffDays]);
 
-    const prevStartDateStr = prevStart ? prevStart.toISOString().split('T')[0] : null;
-    const prevEndDateStr = prevEnd ? prevEnd.toISOString().split('T')[0] : null;
+    const prevStartDateStr = prevStart ? toTrtDateString(prevStart) : null;
+    const prevEndDateStr = prevEnd ? toTrtDateString(prevEnd) : null;
 
     // Fetch historical ad spend
     const { data: prevGaData } = useGoogleAnalytics(prevStartDateStr, prevEndDateStr);
@@ -272,10 +296,10 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
         orders.forEach(tx => {
             const isReturn = tx.statusObj?.label === 'İade' || tx.statusObj?.label === 'İptal' || tx.statusObj?.label === 'CANCELLED' || tx.statusObj?.label === 'REFUNDED';
             if (isReturn) return;
-            
+
             const rawRev = tx.revenue || 0;
             const isWeb = (tx.channel || '').toLowerCase().includes('web') || (tx.channel || '').toLowerCase().includes('ikas');
-            
+
             if (tx.dateRaw >= dateStart && tx.dateRaw <= dateEnd) {
                 tRev += rawRev;
                 if (isWeb) iRev += rawRev;
@@ -284,7 +308,7 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
                 if (isWeb) pIRev += rawRev;
             }
         });
-        return { 
+        return {
             currIkas: Math.max(1, iRev), currTotal: Math.max(1, tRev),
             prevIkas: Math.max(1, pIRev), prevTotal: Math.max(1, pTRev)
         };
@@ -336,9 +360,9 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
         const aggr = filteredOrders.reduce((acc, order) => {
             const isReturn = order.statusObj?.label === 'İade' || order.statusObj?.label === 'İptal' || order.statusObj?.label === 'CANCELLED' || order.statusObj?.label === 'REFUNDED';
             const rawRev = order.revenue || 0;
-            
+
             acc.grossRevenue += order.grossRevenue || rawRev;
-            
+
             if (isReturn) {
                 acc.returns = (acc.returns || 0) + rawRev;
                 // Sadece kargo gideri (shipping) sirkete eksi yazar. Urun depoya doner (cogs=0), komisyon iptal olur.
@@ -350,9 +374,9 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
                 acc.shipping += order.shipping || 0;
                 acc.commission += order.commission || 0;
                 acc.tax += order.tax || 0;
-                
+
                 const isWeb = (order.channel || '').toLowerCase().includes('web') || (order.channel || '').toLowerCase().includes('ikas');
-                
+
                 // KALİBRASYON: İzole Edilmiş Proportional Giderler. 
                 // Bu sayede filtre Trendyol ise reklam sıfır kalır, Ikas ise ciro kadar asimetrik etkilenir.
                 acc.adSpend += isWeb ? (rawRev * currentRatios.adRatio) : 0;
@@ -370,7 +394,7 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
     const totalCosts = totals.cogs + totals.adSpend + totals.shipping + totals.commission + totals.tax + totals.fixedCost + totals.taxAndAmort;
     const netProfit = totals.revenue - totalCosts;
     const grossProfit = totals.revenue - totals.cogs;
-    
+
     // FAVÖK (EBITDA), Net Kar'a Vergi (KDV dahil), Amortisman ve Faizin geri eklenmesiyle bulunur.
     const ebitda = netProfit + totals.taxAndAmort + totals.tax;
     const roi = totalCosts > 0 ? (netProfit / totalCosts) * 100 : 0;
@@ -402,9 +426,9 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
         const aggr = prevFilteredOrders.reduce((acc, order) => {
             const isReturn = order.statusObj?.label === 'İade' || order.statusObj?.label === 'İptal' || order.statusObj?.label === 'CANCELLED' || order.statusObj?.label === 'REFUNDED';
             const rawRev = order.revenue || 0;
-            
+
             acc.grossRevenue += order.grossRevenue || rawRev;
-            
+
             if (isReturn) {
                 acc.returns = (acc.returns || 0) + rawRev;
                 acc.shipping += order.shipping || 0;
@@ -415,9 +439,9 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
                 acc.shipping += order.shipping || 0;
                 acc.commission += order.commission || 0;
                 acc.tax += order.tax || 0;
-                
+
                 const isWeb = (order.channel || '').toLowerCase().includes('web') || (order.channel || '').toLowerCase().includes('ikas');
-                
+
                 acc.adSpend += isWeb ? (rawRev * prevRatios.adRatio) : 0;
                 acc.fixedCost += (rawRev * prevRatios.sharedFixedRatio) + (isWeb ? (rawRev * prevRatios.ikasFixedRatio) : 0);
                 acc.taxAndAmort += (rawRev * prevRatios.financeRatio);
@@ -454,7 +478,7 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
     useEffect(() => {
         console.group('📉 DÖNEM KARŞILAŞTIRMALI VERİ İFŞASI (100% İSPAT)');
         console.log('=== ŞU ANKİ DÖNEM ===');
-        console.log(`Tarih: ${dateStart.toISOString().split('T')[0]} / ${dateEnd.toISOString().split('T')[0]}`);
+        console.log(`Tarih: ${toTrtDateString(dateStart)} / ${toTrtDateString(dateEnd)}`);
         console.log(`Ciro: ₺${totals.revenue.toFixed(2)}`);
         console.log(`COGS (Maliyet): ₺${totals.cogs.toFixed(2)}`);
         console.log(`Reklam (Google API): ₺${totals.adSpend.toFixed(2)}`);
@@ -599,17 +623,17 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
 
         let curr = new Date(dateStart);
         while (curr <= dateEnd) {
-            const dateStr = curr.toISOString().split('T')[0];
+            const dateStr = toTrtDateString(curr);
             dayMap[dateStr] = { date: dateStr, sales: 0, brutKar: 0, contribution: 0 };
-            curr.setDate(curr.getDate() + 1);
+            curr = new Date(curr.getTime() + 24 * 60 * 60 * 1000); // exactly +24h
         }
 
         // Trace Orders and calculate daily metrics
         filteredOrders.forEach(order => {
-            const dateStr = order.dateRaw.toISOString().split('T')[0];
+            const dateStr = toTrtDateString(order.dateRaw);
             if (dayMap[dateStr]) {
                 const isReturn = order.statusObj?.label === 'İade' || order.statusObj?.label === 'İptal' || order.statusObj?.label === 'CANCELLED' || order.statusObj?.label === 'REFUNDED';
-                
+
                 const revenue = isReturn ? 0 : (order.revenue || 0);
                 const cogs = isReturn ? 0 : (order.cogs || 0);
                 const shipping = order.shipping || 0; // always kept
@@ -624,8 +648,8 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
             }
         });
 
-        const sortedDays = Object.values(dayMap).sort((a,b) => new Date(a.date) - new Date(b.date));
-        
+        const sortedDays = Object.values(dayMap).sort((a, b) => new Date(a.date) - new Date(b.date));
+
         // Kümülatif başlangıç noktamız (Dönemin toplam genel/sabit gider deliğinin filtrelenmiş oransal hacmi)
         const totalFixedHole = (totals.fixedCost || 0) + (totals.taxAndAmort || 0) + (totals.adSpend || 0);
 
@@ -637,10 +661,10 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
         return sortedDays.map(day => {
             cumulativeSales += day.sales;
             cumulativeBrutKar += day.brutKar;
-            
+
             const prevNetDurum = cumulativeNetDurum;
             cumulativeNetDurum += day.contribution;
-            
+
             let isBreakEven = false;
             // Mark break-even exact crossing date
             if (prevNetDurum < 0 && cumulativeNetDurum >= 0 && !breakEvenFound) {
@@ -701,6 +725,197 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
     }, [products, competitors, activeCategory]);
 
     const hasActiveFilter = activeCategory !== 'all' || activeChannel !== 'all' || activeDateRange !== 'last30';
+
+    // =========================================================
+    // ACTION CENTER: AKILLI ASİSTAN (Merged & Diversified Alerts Logic)
+    // =========================================================
+    const dashboardAlerts = useMemo(() => {
+        if (!products || products.length === 0) return [];
+
+        const categories = { profit: [], stock: [], competition: [], opportunity: [] };
+
+        // Pre-calculate true profitability values matching ProductProfitability table logic
+        const trueGlobalFixed = expensesData
+            .filter(e => !e.allocationScope || e.allocationScope.type === 'global')
+            .reduce((sum, e) => sum + calculateDailyExpense(e), 0) * 30; // 30-day window fallback
+
+        // Estimate total revenue for unit economics ratio
+        const estTotalRev = orders.reduce((acc, tx) => acc + (tx.revenue || 0), 0) || 100000;
+        const estAdSpend = 15000; // Web ad spend fallback
+
+        // Global overhead ratio mapping
+        const overheadRatio = (trueGlobalFixed + estAdSpend) / estTotalRev;
+
+        products.forEach(p => {
+            const myPrice = p.price || 0;
+            // Omit irrelevant or non-merchandise products
+            if (myPrice <= 0 || p.category === 'Aksesuar' || p.category === 'Diğer' || (p.name && p.name.toLowerCase().includes('manyetik'))) return;
+
+            // Accurate Margin calculation imitating ProductProfitability
+            // (Assuming KDV ~20% deducted from list price if price is KDV dahil)
+            const netPriceWithoutTax = myPrice / 1.20;
+            const kdvDiff = myPrice - netPriceWithoutTax;
+
+            // Check productCosts fallback (mocking real cogs logic)
+            const cogs = p.cogs > 0 ? p.cogs : netPriceWithoutTax * 0.25;
+
+            // Channel blended averages
+            const commRate = 0.15; // Assuming avg 15% marketplace comm
+            const shipping = p.shipping > 0 ? p.shipping : 45; // ~45 TL cargo
+
+            // Apply overhead proportion
+            const indirectOverhead = myPrice * overheadRatio;
+
+            // Total Cost Formula (simulated global)
+            const totalUnitCost = cogs + (myPrice * commRate) + shipping + kdvDiff + indirectOverhead;
+
+            // True unit net profit
+            const netProfit = myPrice - totalUnitCost;
+            const margin = (netProfit / myPrice) * 100;
+
+            // 1. Profitability Candidates (We'll check if margin is uncomfortably low, < 20%)
+            if (margin < 20) {
+                categories.profit.push({
+                    marginVal: margin,
+                    alert: {
+                        id: `${p.id}-profit`,
+                        type: 'profit',
+                        priority: 1, // Highest risk
+                        title: 'Birim Marjı Kritik Seviyede',
+                        product: p.name,
+                        icon: TrendingDown,
+                        color: 'rose',
+                        message: `Bu üründe asıl kârlılık %${margin.toFixed(1)} seviyesine geriledi. Tüm giderleri karşılamakta zorlanıyor, fiyat revizesi düşünün.`,
+                        actionLabel: 'Kârlılık Sayfasına Git'
+                    }
+                });
+            }
+
+            // 2. Out of Stock Risk Candidates
+            const stock = p.stock || 0;
+            // Let's use < 25 for demo data elasticity and catch more items
+            if (stock < 25) {
+                categories.stock.push({
+                    stockVal: stock,
+                    alert: {
+                        id: `${p.id}-stock`,
+                        type: 'stock',
+                        priority: 3,
+                        title: 'Stok Tükenme Riski',
+                        product: p.name,
+                        icon: AlertTriangle,
+                        color: 'amber',
+                        message: `Stoklarda sadece ${stock} adet kaldı. Hızlı satış temposuna karşın acil üretim/tedarik planı başlatın.`,
+                        actionLabel: 'Envanter Sayfasına Git'
+                    }
+                });
+            }
+
+            // Cross-reference with competitors
+            if (competitors && competitors.length > 0) {
+                const productComps = competitors.filter(c => c.productId === p.id);
+                if (productComps.length > 0) {
+                    const cheapestComp = productComps.reduce((min, cur) => cur.price < min.price ? cur : min);
+
+                    // 3. Competition Guard
+                    if (myPrice > cheapestComp.price) {
+                        categories.competition.push({
+                            priceGap: myPrice - cheapestComp.price,
+                            alert: {
+                                id: `${p.id}-competition`,
+                                type: 'competition',
+                                priority: 2,
+                                title: 'Fiyat Avantajı Rakibe Geçti',
+                                product: p.name,
+                                icon: ShieldAlert,
+                                color: 'indigo',
+                                message: `Rakip ${cheapestComp.source.replace('www.', '').split('.')[0]} pazarında ₺${cheapestComp.price.toLocaleString('tr-TR')} ile listeleyip satışı çalıyor.`,
+                                actionLabel: 'Rekabet Sayfasına Git'
+                            }
+                        });
+                    }
+
+                    // 4. Price Opportunity (Healthy margin > 15% AND competitor is much more expensive)
+                    if (margin >= 15 && cheapestComp.price > myPrice * 1.1) {
+                        const targetPrice = Math.floor(myPrice * 1.05); // suggest 5% bump
+                        categories.opportunity.push({
+                            marginVal: margin,
+                            alert: {
+                                id: `${p.id}-opportunity`,
+                                type: 'opportunity',
+                                priority: 4,
+                                title: 'Gizli Kâr Fırsatı',
+                                product: p.name,
+                                icon: Sparkles,
+                                color: 'emerald',
+                                message: `Rakipler sizden (₺${cheapestComp.price.toLocaleString('tr-TR')}) çok daha pahalı! Fiyatı rahatça ₺${targetPrice.toLocaleString('tr-TR')} seviyesine artırarak ekstra kâr yazabilirsiniz.`,
+                                actionLabel: 'Kârlılık Sayfasına Git'
+                            }
+                        });
+                    }
+                }
+            }
+        });
+
+        // Mix strategies: Sort each bucket by severity and take top 2 items from each, blending them into one list.
+        categories.profit.sort((a, b) => a.marginVal - b.marginVal); // Lowest margin first
+        categories.stock.sort((a, b) => a.stockVal - b.stockVal); // Lowest stock first
+        categories.competition.sort((a, b) => b.priceGap - a.priceGap); // Biggest gap first
+        categories.opportunity.sort((a, b) => b.marginVal - a.marginVal); // Highest margin first
+
+        let finalAlerts = [];
+        const extractTop = (catList, count) => catList.slice(0, count).forEach(item => finalAlerts.push(item.alert));
+
+        // Attempt to extract top 3 profit, 2 stock, 3 competition, and 2 opportunities
+        extractTop(categories.profit, 3);
+        extractTop(categories.stock, 2);
+        extractTop(categories.competition, 3);
+        extractTop(categories.opportunity, 2);
+
+        // Sort final list by priority
+        return finalAlerts.sort((a, b) => a.priority - b.priority);
+    }, [products, competitors, expensesData, orders]);
+
+    // Calculate light Buybox KPIs specifically for Dashboard
+    const compKPIs = useMemo(() => {
+        let winWinCount = 0;
+        let totalTrackedCount = 0;
+        let compCountMap = {};
+
+        products.forEach(p => {
+            const productCompetitors = competitors.filter(c => c.productId === p.id);
+            const activeComp = productCompetitors.find(c => c.status === 'Takipte') || productCompetitors[0];
+            const basePrice = p.price || 0;
+
+            if (activeComp && activeComp.price > 0) {
+                totalTrackedCount++;
+                const buyboxOwner = basePrice <= activeComp.price;
+                if (buyboxOwner) {
+                    winWinCount++;
+                } else {
+                     if (activeComp.source && activeComp.source !== 'Rakip Yok') {
+                        let brandRaw = activeComp.source.replace('www.', '').replace('.com', '').replace('.tr', '').replace('/', '');
+                        let brand = brandRaw.charAt(0).toUpperCase() + brandRaw.slice(1);
+                        compCountMap[brand] = (compCountMap[brand] || 0) + 1;
+                    }
+                }
+            }
+        });
+
+        const winRate = totalTrackedCount > 0 ? (winWinCount / totalTrackedCount) * 100 : 0;
+        let maxComp = { name: '-', count: 0 };
+        for (const [name, count] of Object.entries(compCountMap)) {
+            if (count > maxComp.count) maxComp = { name, count };
+        }
+
+        return {
+            winRate,
+            winCount: winWinCount,
+            total: totalTrackedCount,
+            aggressiveName: maxComp.name,
+            aggressiveCount: maxComp.count
+        };
+    }, [products, competitors]);
 
     // Close dropdown when clicking outside
     useEffect(() => {
@@ -944,27 +1159,27 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
                                 tick={{ fill: '#9ca3af', fontSize: 11 }}
                                 tickLine={false}
                                 axisLine={false}
-                                tickFormatter={(value) => `₺${value > 1000 || value < -1000 ? (value/1000).toFixed(0) + 'k' : value}`}
+                                tickFormatter={(value) => `₺${value > 1000 || value < -1000 ? (value / 1000).toFixed(0) + 'k' : value}`}
                                 domain={['auto', 'auto']}
                             />
                             <Tooltip
                                 content={<CustomTooltip />}
                                 cursor={{ stroke: '#e5e7eb', strokeWidth: 1, strokeDasharray: '4 4' }}
                             />
-                            
+
                             {/* Zero Axis Reference Line */}
                             <ReferenceLine y={0} stroke="#94a3b8" strokeOpacity={0.5} strokeWidth={2} />
-                            
+
                             {/* Break-Even Vertical Line */}
                             {breakEvenDate && (
-                                <ReferenceLine 
-                                    x={breakEvenDate} 
-                                    stroke="#ec4899" 
-                                    strokeDasharray="4 4" 
-                                    label={{ position: 'top', value: 'Başabaş', fill: '#be185d', fontSize: 12, fontWeight: 700 }} 
+                                <ReferenceLine
+                                    x={breakEvenDate}
+                                    stroke="#ec4899"
+                                    strokeDasharray="4 4"
+                                    label={{ position: 'top', value: 'Başabaş', fill: '#be185d', fontSize: 12, fontWeight: 700 }}
                                 />
                             )}
-                            
+
                             {/* Cumulative Gross Profit Line */}
                             <Line
                                 type="monotone"
@@ -1002,11 +1217,11 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
                             />
 
                             {/* Net Status Line (Starts negative, goes up) */}
-                            <Line 
-                                type="monotone" 
-                                dataKey="netDurum" 
-                                name="Genel Kar / Zarar" 
-                                stroke="#f43f5e" 
+                            <Line
+                                type="monotone"
+                                dataKey="netDurum"
+                                name="Genel Kar / Zarar"
+                                stroke="#f43f5e"
                                 strokeWidth={3}
                                 dot={false}
                                 activeDot={{ r: 6, strokeWidth: 3, stroke: '#ffffff', fill: '#f43f5e' }}
@@ -1016,82 +1231,185 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
                 </div>
             </div>
 
-            {/* Main Content Grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Dashboard'dan Ürün Karlılık Aksiyonları Sayfasına Alındı */}
 
-                {/* Left Col: Marketing */}
-                <div className="space-y-6">
-                    <MarketingPerformance
-                        startDate={dateStart.toISOString().split('T')[0]}
-                        endDate={dateEnd.toISOString().split('T')[0]}
-                    />
+            {/* ========================================================= */}
+            {/* ACTION CENTER STRIP (🚨 Asistan & Öneriler) */}
+            {/* ========================================================= */}
+            {dashboardAlerts.length > 0 && (
+                <div className="mt-6 w-full relative bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                    {/* Header Banner */}
+                    <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+                        <div className="flex items-center gap-3">
+                            <div className="bg-indigo-50 p-2 rounded-lg border border-indigo-100">
+                                <Zap className="w-5 h-5 text-indigo-600" />
+                            </div>
+                            <div>
+                                <h3 className="text-slate-900 font-bold text-sm flex items-center gap-2">
+                                    Kontrol & Aksiyon Merkezi
+                                </h3>
+                                <p className="text-slate-500 text-xs mt-0.5">
+                                    Yapay zeka algoritmalarımızla taranan acil müdahale noktaları ve öneriler.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="hidden md:flex bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
+                            <span className="text-slate-700 font-bold text-[11px]">{dashboardAlerts.length} Aktif Uyarı</span>
+                        </div>
+                    </div>
 
+                    {/* Horizontal Scroller Map */}
+                    <div className="flex overflow-x-auto gap-4 px-6 pt-4 pb-6 snap-x snap-mandatory scroll-px-6 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent items-stretch">
+                        {dashboardAlerts.map((alert, idx) => {
+                            const Icon = alert.icon;
+                            // Color mapping for bg/text styling
+                            const colorMap = {
+                                rose: "from-rose-50 to-white border-rose-200 text-rose-700 hover:border-rose-300 shadow-rose-900/10",
+                                amber: "from-amber-50 to-white border-amber-200 text-amber-700 hover:border-amber-300 shadow-amber-900/10",
+                                indigo: "from-indigo-50 to-white border-indigo-200 text-indigo-700 hover:border-indigo-300 shadow-indigo-900/10",
+                                emerald: "from-emerald-50 to-white border-emerald-200 text-emerald-700 hover:border-emerald-300 shadow-emerald-900/10",
+                            };
+
+                            const iconMap = {
+                                rose: "bg-rose-100 text-rose-600",
+                                amber: "bg-amber-100 text-amber-600",
+                                indigo: "bg-indigo-100 text-indigo-600",
+                                emerald: "bg-emerald-100 text-emerald-600",
+                            };
+
+                            return (
+                                <div key={alert.id || idx} className={`relative shrink-0 w-[290px] rounded-xl border bg-gradient-to-br ${colorMap[alert.color]} flex flex-col justify-between snap-start p-4 shadow-sm group transition-all duration-300 hover:shadow-md hover:translate-y-[-2px]`}>
+                                    <div>
+                                        <div className="flex justify-between items-start mb-3">
+                                            <div className={`p-2 rounded-lg ${iconMap[alert.color]}`}>
+                                                <Icon className="w-4 h-4" />
+                                            </div>
+                                            <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded opacity-80 border bg-white ${colorMap[alert.color]}`}>
+                                                {alert.title}
+                                            </span>
+                                        </div>
+                                        <h4 className="text-slate-900 font-bold text-[13px] leading-tight mb-2 line-clamp-2" title={alert.product}>{alert.product}</h4>
+                                        <p className="text-slate-600 text-[11px] leading-relaxed mb-4">
+                                            {alert.message}
+                                        </p>
+                                    </div>
+                                    <button
+                                        onClick={() => {
+                                            if (alert.type === 'profit' || alert.type === 'opportunity') {
+                                                if (onNavigate) onNavigate('products');
+                                            } else if (alert.type === 'competition') {
+                                                if (onNavigate) onNavigate('competition');
+                                            } else if (alert.type === 'stock') {
+                                                if (onNavigate) onNavigate('inventory');
+                                            }
+                                        }}
+                                        className={`w-full py-2 bg-white rounded-lg border shadow-[0_2px_8px_-4px_rgba(0,0,0,0.1)] text-[11px] font-bold transition-colors flex items-center justify-center gap-1.5 ${colorMap[alert.color]}`}
+                                    >
+                                        {alert.actionLabel}
+                                        <ArrowUpRight className="w-3 h-3 opacity-70" />
+                                    </button>
+                                </div>
+                            );
+                        })}
+                    </div>
                 </div>
+            )}
 
-                {/* Right Col: Inventory & Sales Channels */}
-                <div className="space-y-6">
-                    <InventoryInsights t={t} products={products} orders={orders} />
-
-                </div>
-
-            </div>
-
+            {/* 2) REKABET ÖZETİ | STOK VE ENVANTER ANALİZİ (İkili Grid) */}
+            {/* ========================================================= */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-                {/* Rekabet Özeti */}
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col h-full">
-                    <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+
+                {/* SOL SÜTUN: Rekabet Özeti */}
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col h-full overflow-hidden">
+                    <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center shrink-0">
                         <h3 className="text-gray-900 font-bold text-sm">Rekabet Özeti</h3>
-                        {/* D7 Fix: Navigate to competition tab instead of dead href */}
                         <button onClick={() => onNavigate && onNavigate('competition')} className="text-indigo-600 text-xs font-medium hover:text-indigo-800 hover:underline">Tümünü Gör</button>
                     </div>
 
-                    <div className="p-4 space-y-4 overflow-y-auto max-h-[400px]">
-                        {filteredAlerts.length === 0 ? (
-                            <div className="text-center py-6 text-slate-400">
-                                <p className="text-sm font-medium">Bu filtre için rekabet alarmı yok</p>
-                                <p className="text-xs mt-1">Fiyat avantajı var olan ürün bulunamadı</p>
+                    {/* COMPETITION KPI MINI-CARDS */}
+                    <div className="grid grid-cols-2 gap-3 p-4 border-b border-gray-100 bg-slate-50/50 shrink-0">
+                        <div className="bg-white border border-gray-100 rounded-lg p-3 shadow-sm flex flex-col justify-center">
+                            <span className="text-[10px] uppercase font-bold text-gray-500 mb-1 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500"/> Buybox Kazanma</span>
+                            <div className="flex items-end gap-2">
+                                <span className="text-xl font-black text-gray-900">%{(compKPIs.winRate || 0).toFixed(0)}</span>
+                                <span className="text-xs font-medium text-emerald-600 mb-1">{compKPIs.winCount} / {compKPIs.total} Lider</span>
                             </div>
-                        ) : filteredAlerts.map((alert) => (
-                            <div key={alert.id} className="flex flex-col gap-2 p-3 bg-white hover:bg-rose-50/50 rounded-lg border border-gray-100 transition-colors">
-                                <p className="text-sm font-bold text-gray-900 leading-tight line-clamp-2">{alert.product}</p>
+                        </div>
+                        <div className="bg-white border border-gray-100 rounded-lg p-3 shadow-sm flex flex-col justify-center">
+                            <span className="text-[10px] uppercase font-bold text-gray-500 mb-1 flex items-center gap-1"><Swords className="w-3.5 h-3.5 text-indigo-500"/> En Agresif Rakip</span>
+                            <div className="flex items-center justify-between">
+                                <span className="text-sm font-bold text-gray-900 line-clamp-1 pr-2">{compKPIs.aggressiveName || '-'}</span>
+                                {compKPIs.aggressiveCount > 0 && <span className="text-[10px] font-bold bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded shadow-sm whitespace-nowrap">{compKPIs.aggressiveCount} Üründe Lider</span>}
+                            </div>
+                        </div>
+                    </div>
 
-                                <div className="flex items-center justify-between mt-1">
-                                    <div className="flex flex-col">
-                                        <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-0.5">Sizin Fiyatınız</span>
-                                        <span className="text-sm font-bold text-gray-400 line-through decoration-rose-300">₺{alert.myPrice.toLocaleString('tr-TR')}</span>
-                                    </div>
+                    <div className="relative flex-1 bg-white">
+                        <div className="absolute inset-0 p-6 space-y-4 overflow-y-auto custom-scrollbar">
+                            {filteredAlerts.length === 0 ? (
+                                <div className="text-center py-6 text-slate-400">
+                                    <p className="text-sm font-medium">Bu filtre için rekabet alarmı yok</p>
+                                    <p className="text-xs mt-1">Fiyat avantajı var olan ürün bulunamadı</p>
+                                </div>
+                            ) : filteredAlerts.map((alert) => (
+                                <div key={alert.id} className="flex flex-col gap-2 p-3 bg-white hover:bg-rose-50/50 rounded-lg border border-gray-100 transition-colors">
+                                    <p className="text-sm font-bold text-gray-900 leading-tight line-clamp-2">{alert.product}</p>
 
-                                    <div className="flex flex-col items-end">
-                                        <span className="text-[10px] text-rose-500 font-bold uppercase tracking-wider mb-0.5" title={alert.competitor}>
-                                            Rakip Fiyatı ({alert.competitor.replace('www.', '').split('.')[0]})
-                                        </span>
-                                        <div className={`flex items-center gap-1 text-[15px] font-black ${alert.badgeColor}`}>
-                                            ₺{alert.competitorPrice.toLocaleString('tr-TR')}
-                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"></path></svg>
+                                    <div className="flex items-center justify-between mt-1">
+                                        <div className="flex flex-col">
+                                            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-0.5">Sizin Fiyatınız</span>
+                                            <span className="text-sm font-bold text-gray-400 line-through decoration-rose-300">₺{alert.myPrice.toLocaleString('tr-TR')}</span>
+                                        </div>
+
+                                        <div className="flex flex-col items-end">
+                                            <span className="text-[10px] text-rose-500 font-bold uppercase tracking-wider mb-0.5" title={alert.competitor}>
+                                                Rakip Fiyatı ({alert.competitor.replace('www.', '').split('.')[0]})
+                                            </span>
+                                            <div className={`flex items-center gap-1 text-[15px] font-black ${alert.badgeColor}`}>
+                                                ₺{alert.competitorPrice.toLocaleString('tr-TR')}
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"></path></svg>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
 
-                                <div className={`mt-1 text-xs font-bold px-3 py-1.5 rounded-md w-full text-center ${alert.badgeBg} ${alert.badgeColor} border border-rose-100/50 flex flex-col`}>
-                                    <span>⚠️ Fiyat Avantajı Rakipte!</span>
-                                    <span className="text-[10px] opacity-80 mt-0.5">
-                                        {alert.competitor.replace('www.', '').split('.')[0]} platformunda bu ürünü sizden ₺{(alert.myPrice - alert.competitorPrice).toLocaleString('tr-TR')} daha ucuza satıyorlar.
-                                    </span>
+                                    <div className={`mt-1 text-xs font-bold px-3 py-1.5 rounded-md w-full text-center ${alert.badgeBg} ${alert.badgeColor} border border-rose-100/50 flex flex-col`}>
+                                        <span>⚠️ Fiyat Avantajı Rakipte!</span>
+                                        <span className="text-[10px] opacity-80 mt-0.5">
+                                            {alert.competitor.replace('www.', '').split('.')[0]} platformunda bu ürünü sizden ₺{(alert.myPrice - alert.competitorPrice).toLocaleString('tr-TR')} daha ucuza satıyorlar.
+                                        </span>
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
+                            ))}
+                        </div>
                     </div>
                 </div>
 
-                {/* Satış Kanalları */}
+                {/* SAĞ SÜTUN: Stok ve Envanter Analizi */}
+                <div className="space-y-6 h-full">
+                    <InventoryInsights t={t} products={products} orders={orders} onNavigate={onNavigate} />
+                </div>
+            </div>
+
+            {/* ========================================================= */}
+            {/* 3) PAZARLAMA PERFORMANSI | SATIŞ KANALLARI (İkili Grid) */}
+            {/* ========================================================= */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+
+                {/* SOL SÜTUN: Pazarlama Performansı */}
+                <div className="space-y-6 h-full">
+                    <MarketingPerformance
+                        startDate={toTrtDateString(dateStart)}
+                        endDate={toTrtDateString(dateEnd)}
+                    />
+                </div>
+
+                {/* SAĞ SÜTUN: Satış Kanalları ve Performans */}
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col h-full">
                     <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
                         <h3 className="text-gray-900 font-bold text-sm">Satış Kanalları ve Performans</h3>
-                        {/* D8 Fix: Replaced dummy ⋯ button with a real navigation link */}
                         <button onClick={() => onNavigate && onNavigate('reports')} className="text-indigo-600 text-xs font-medium hover:text-indigo-800 hover:underline">Rapor →</button>
                     </div>
 
-                    {/* Compute channel revenue and unit counts explicitly from filtered orders */}
                     {(() => {
                         const CHANNEL_STYLES = {
                             'Trendyol': { bg: 'bg-orange-50', border: 'border-orange-100', label: 'text-orange-600', labelBorder: 'border-orange-200' },
@@ -1122,14 +1440,13 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
                         }
 
                         return (
-                            <div className="p-6 grid grid-cols-2 gap-4">
+                            <div className="p-6 grid grid-cols-2 gap-4 items-start content-start">
                                 {sorted.map(([name, s], idx) => {
                                     const style = CHANNEL_STYLES[name] || { bg: 'bg-gray-50', border: 'border-gray-100', label: 'text-gray-600', labelBorder: 'border-gray-200' };
-                                    // Represent share of total pie, not max channel
                                     const sharePct = totalChannelsRevenue > 0 ? Math.round((s.revenue / totalChannelsRevenue) * 100) : 0;
                                     const isTop = idx === 0;
                                     return (
-                                        <div key={name} className={`${style.bg} rounded-xl p-4 border ${style.border} flex flex-col justify-between`}>
+                                        <div key={name} className={`${style.bg} rounded-xl p-4 border ${style.border} flex flex-col gap-6`}>
                                             <div className="flex justify-between items-start mb-4">
                                                 <span className={`text-xs font-bold ${style.label} bg-white border ${style.labelBorder} px-2 py-0.5 rounded shadow-sm`}>{name}</span>
                                                 <span className={`text-[10px] font-bold flex items-center gap-1 ${isTop ? 'text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded' : 'text-slate-500 bg-white px-1.5 py-0.5 rounded border border-slate-200'}`}>
@@ -1139,9 +1456,8 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
                                                     {isTop ? 'En Yüksek' : `%${sharePct} Ciro Payı`}
                                                 </span>
                                             </div>
-                                            
+
                                             <div className="space-y-3">
-                                                {/* Header Net Ciro */}
                                                 <div>
                                                     <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">Net Ciro</p>
                                                     <div className="flex items-baseline gap-2">
@@ -1150,7 +1466,6 @@ export const Dashboard = ({ t, competition, onNavigate, filters = {} }) => {
                                                     </div>
                                                 </div>
 
-                                                {/* Detailed Breakdown Grid */}
                                                 <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/50">
                                                     <div>
                                                         <p className="text-[9px] text-slate-500 mb-0.5">Brüt Satış</p>

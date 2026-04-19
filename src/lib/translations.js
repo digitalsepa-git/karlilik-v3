@@ -1,7 +1,7 @@
 export const translations = {
     tr: {
         sidebar: {
-            dashboard: "Özet",
+            dashboard: "Dashboard",
             products: "Ürün & Karlılık",
             productManagement: "Ürün Yönetimi",
             inventory: "Stok Sağlığı",
@@ -27,7 +27,7 @@ export const translations = {
             admin: "Yönetici"
         },
         dashboard: {
-            title: "Özet",
+            title: "Dashboard",
             download: "Rapor İndir",
             netSales: "Net Satışlar",
             netProfit: "Net Kar",

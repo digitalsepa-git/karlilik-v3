@@ -40,3 +40,19 @@ export const calculateDailyExpense = (expense) => {
     // Default fallback is Monthly (Aylık)
     return amount / 30;
 };
+
+// Değişken maliyet kuralları (Sipariş başına kesintiler, komisyonlar vb.)
+export const variableRulesData = [
+    // Payment & Commissions
+    { id: 1, category: 'payment', nameKey: 'trendyolComm', name: 'Trendyol Komisyon', type: 'percentage', val1: 18, unit: 'sale', appliesTo: ['Trendyol'] },
+    { id: 2, category: 'payment', nameKey: 'iyzico', name: 'Sanal POS (İyzico)', type: 'hybrid', val1: 2.9, val2: 0.50, unit: 'sale', appliesTo: ['Site'] },
+    
+    // Logistics & Ops
+    { id: 4, category: 'logistics', nameKey: 'cargo', name: 'Kargo Gönderim', type: 'amount', val1: 45.00, unit: 'order', appliesTo: 'all' },
+    { id: 5, category: 'logistics', nameKey: 'packaging', name: 'Paketleme ve Sarf Malzeme', type: 'amount', val1: 3.50, unit: 'order', appliesTo: 'all' },
+    { id: 6, category: 'logistics', nameKey: 'returnOps', name: 'İade Operasyon', type: 'amount', val1: 25.00, unit: 'return', appliesTo: 'all' },
+
+    // Marketing
+    { id: 7, category: 'marketing', nameKey: 'cpa', name: 'Acquisition / Satış Başına Maliyet', type: 'amount', val1: 65.00, unit: 'order', appliesTo: ['Site'] },
+    { id: 8, category: 'marketing', nameKey: 'influencer', name: 'Influencer Ajans Payı', type: 'percentage', val1: 10, unit: 'sale', appliesTo: 'all' },
+];

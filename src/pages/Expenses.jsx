@@ -16,7 +16,7 @@ import {
     Calculator
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { expensesData } from '../data/expensesData';
+import { expensesData, variableRulesData } from '../data/expensesData';
 
 import { AddVariableExpenseModal } from '../components/expenses/AddVariableExpenseModal';
 
@@ -267,22 +267,11 @@ const FixedExpenses = ({ t }) => {
 };
 
 const VariableExpenses = ({ t }) => {
-    // Mock Data for Cost Rules
-    const rules = [
-        // Payment & Commissions
-        { id: 1, category: 'payment', name: t.expenses.variable.items.trendyolComm, type: 'percentage', val1: 18, unit: 'sale' },
-        { id: 2, category: 'payment', name: t.expenses.variable.items.iyzico, type: 'hybrid', val1: 2.9, val2: 0.50, unit: 'sale' },
-        { id: 3, category: 'payment', name: t.expenses.variable.items.eft, type: 'amount', val1: 0, unit: 'sale' },
-
-        // Logistics & Ops
-        { id: 4, category: 'logistics', name: t.expenses.variable.items.cargo, type: 'amount', val1: 45.00, unit: 'order' },
-        { id: 5, category: 'logistics', name: t.expenses.variable.items.packaging, type: 'amount', val1: 3.50, unit: 'order' },
-        { id: 6, category: 'logistics', name: t.expenses.variable.items.returnOps, type: 'amount', val1: 25.00, unit: 'return' },
-
-        // Marketing
-        { id: 7, category: 'marketing', name: t.expenses.variable.items.cpa, type: 'amount', val1: 65.00, unit: 'order' },
-        { id: 8, category: 'marketing', name: t.expenses.variable.items.influencer, type: 'percentage', val1: 10, unit: 'sale' },
-    ];
+    // Shared Data for Cost Rules
+    const rules = variableRulesData.map(r => ({
+        ...r,
+        name: t?.expenses?.variable?.items?.[r.nameKey] || r.name // Auto-translation fallback if available
+    }));
 
     const renderRuleBadge = (rule) => {
         let text = '';

@@ -116,11 +116,27 @@ router.post('/scan', async (req, res) => {
 
         console.log(`[Scan API] Headless browser connecting to: ${url}`);
         const isTrendyolStore = url.includes('trendyol.com/magaza') || url.includes('trendyol.com/tum--urunler') || url.includes('trendyol.com/sr') || url.includes('/profil/');
+        const isBeymenStore = url.includes('beymen.com');
+        const isBulkScan = isTrendyolStore || isBeymenStore || url.includes('sephora') || url.includes('watsons');
 
-        const browser = await chromium.launch({ headless: true });
-        const context = await browser.newContext({
-            userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        const browser = await chromium.launch({ 
+            headless: false, // Görünür tarayıcı kullanmak bot korumalarını (Cloudflare/PerimeterX) aşmaya yardımcı olur
+            args: ['--disable-blink-features=AutomationControlled']
         });
+        const context = await browser.newContext({
+            userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+            viewport: { width: 1280, height: 720 },
+            locale: 'tr-TR',
+            timezoneId: 'Europe/Istanbul'
+        });
+        // Tarayıcı parmak izlerini gizle (Stealth Module)
+        await context.addInitScript(() => {
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['tr-TR', 'tr', 'en-US', 'en'] });
+            window.chrome = { runtime: {} };
+        });
+        
         const page = await context.newPage();
         
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(e => console.warn('Scraping goto soft-timeout:', e.message));
@@ -128,37 +144,62 @@ router.post('/scan', async (req, res) => {
 
         let results = [];
 
-        if (isTrendyolStore) {
-            console.log(`[Scan API] Parsing URL as Trendyol Store/Listing...`);
+        if (isBulkScan) {
+            console.log(`[Scan API] Parsing URL as Bulk Store/Catalog (Trendyol/Beymen/Generic)...`);
+            
             // Trigger lazy loading for images and prices
-            await page.evaluate(() => window.scrollBy(0, 1500));
-            await page.waitForTimeout(1500);
+            for (let i = 0; i < 3; i++) {
+                await page.evaluate(() => window.scrollBy(0, 1500));
+                await page.waitForTimeout(1000);
+            }
 
-            const scrapedStoreProducts = await page.evaluate(() => {
-                const cards = document.querySelectorAll('.p-card-wrppr, .product-card');
+            const scrapedStoreProducts = await page.evaluate((storeType) => {
+                let cards = [];
+                if (storeType === 'trendyol') {
+                    cards = document.querySelectorAll('.p-card-wrppr, .product-card');
+                } else if (storeType === 'beymen') {
+                    cards = document.querySelectorAll('.o-productList__item, .m-productCard, .b-product-card');
+                } else {
+                    cards = document.querySelectorAll('.product-card, .product-item, .card, article');
+                }
+
                 let items = [];
                 cards.forEach(card => {
-                    const titleEl = card.querySelector('.prdct-desc-cntnr-name') || card.querySelector('.prdct-desc-cntnr-ttl') || card.querySelector('.product-name');
-                    const titleBrand = card.querySelector('.prdct-desc-cntnr-ttl') || card.querySelector('.brand-name');
-                    const priceEl = card.querySelector('.prc-box-dscntd') || card.querySelector('.prc-box-sllng') || card.querySelector('.discounted-price') || card.querySelector('.price-value');
-                    const imgEl = card.querySelector('.p-card-img') || card.querySelector('img');
+                    let titleEl, brandEl, priceEl, imgEl;
+                    
+                    if (storeType === 'beymen') {
+                        titleEl = card.querySelector('.m-productCard__desc') || card.querySelector('.m-productCard__title') || card.querySelector('h3');
+                        brandEl = card.querySelector('.m-productCard__brand');
+                        priceEl = card.querySelector('.m-productCard__newPrice') || card.querySelector('.m-productPrice__salePrice') || card.querySelector('.m-productCard__newPrice span');
+                        imgEl = card.querySelector('img');
+                    } else {
+                        titleEl = card.querySelector('.prdct-desc-cntnr-name') || card.querySelector('.prdct-desc-cntnr-ttl') || card.querySelector('.product-name') || card.querySelector('h3');
+                        brandEl = card.querySelector('.prdct-desc-cntnr-ttl') || card.querySelector('.brand-name');
+                        priceEl = card.querySelector('.prc-box-dscntd') || card.querySelector('.prc-box-sllng') || card.querySelector('.discounted-price') || card.querySelector('.price-value') || card.querySelector('.price');
+                        imgEl = card.querySelector('.p-card-img') || card.querySelector('img');
+                    }
+
                     const linkEl = card.tagName.toUpperCase() === 'A' ? card : card.querySelector('a');
 
-                    const brandVal = titleBrand && titleBrand !== titleEl ? titleBrand.innerText.trim() + " " : "";
+                    const brandVal = brandEl && brandEl !== titleEl ? brandEl.innerText.trim() + " " : "";
                     const title = (brandVal + (titleEl ? titleEl.innerText.trim() : '')).trim();
                     const priceText = priceEl ? priceEl.innerText : '0';
                     const image = imgEl ? imgEl.src : '';
                     let itemUrl = linkEl ? linkEl.getAttribute('href') : '';
+                    
                     if (itemUrl && !itemUrl.startsWith('http')) {
-                        itemUrl = 'https://www.trendyol.com' + itemUrl;
+                        const host = storeType === 'beymen' ? 'https://www.beymen.com' : (storeType === 'trendyol' ? 'https://www.trendyol.com' : '');
+                        if (host) itemUrl = host + itemUrl;
                     }
 
-                    if (title && priceText) {
-                        items.push({ title, priceText, image, source: 'Trendyol', url: itemUrl || window.location.href });
+                    if (title && priceText && priceText !== '0') {
+                        let sourceLabel = storeType === 'beymen' ? 'Beymen' : (storeType === 'trendyol' ? 'Trendyol' : 'Rakip Katalog');
+                        items.push({ title, priceText, image, source: sourceLabel, url: itemUrl || window.location.href });
                     }
                 });
                 return items;
-            });
+            }, isBeymenStore ? 'beymen' : (isTrendyolStore ? 'trendyol' : 'generic'));
+            
             results = scrapedStoreProducts;
             console.log(`[Scan API] Successfully scraped ${results.length} products from store.`);
         } else {
@@ -237,7 +278,7 @@ router.post('/scan', async (req, res) => {
             let bestMatchScore = 0;
             let sourceTitleForAI = (scraped.title || '').toLowerCase();
 
-            if (!isTrendyolStore) {
+            if (!isBulkScan) {
                 try {
                     let urlObjToParse;
                     try { urlObjToParse = new URL(url); } catch(e) { urlObjToParse = new URL(scraped.url); }
@@ -268,7 +309,7 @@ router.post('/scan', async (req, res) => {
 
             // Exclude unconfident hits ONLY for bulk store crawls (to prevent polluting the UI). 
             // Allow loose hits or missing hits for single-URL scans because the user explicitly pasted them.
-            if (!isTrendyolStore || (isTrendyolStore && bestMatchName !== null)) {
+            if (!isBulkScan || (isBulkScan && bestMatchName !== null)) {
                  finalMatchedResults.push({
                      scrapedTitle: scraped.title,
                      scrapedPrice: matchedPrice || 0,
@@ -286,7 +327,7 @@ router.post('/scan', async (req, res) => {
 
         res.json({
             success: true,
-            data: isTrendyolStore ? finalMatchedResults : (finalMatchedResults[0] || null)
+            data: isBulkScan ? finalMatchedResults : (finalMatchedResults[0] || null)
         });
 
     } catch (e) {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ShoppingBag, Globe, Store, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ShoppingBag, Globe, Store, RefreshCw, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, Search } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { RAW_PRODUCTS } from '../../data/mockProducts';
 import { getFallbackProductImage } from '../../hooks/useOrdersLive';
@@ -72,12 +72,14 @@ export function TransactionTable({ orders = [], loading = false, filters = {} })
     const activeChannel = filters.channel || 'all';
     const activeCategory = filters.category || 'all';
     const [currentPage, setCurrentPage] = useState(1);
+    const [sortConfig, setSortConfig] = useState({ key: 'dateRaw', direction: 'desc' });
+    const [searchQuery, setSearchQuery] = useState('');
     const itemsPerPage = 20;
 
     // Reset page on filter change
     useEffect(() => {
         setCurrentPage(1);
-    }, [filters]);
+    }, [filters, searchQuery]);
 
     const getDateRangeBounds = (rangeFilter) => {
         const now = new Date();
@@ -123,8 +125,16 @@ export function TransactionTable({ orders = [], loading = false, filters = {} })
         // Sadece gerçek API verilerini kullan
         const combined = [...orders.map(o => ({ ...o, isReal: true }))];
 
-        // Sort uniformly by actual date
-        combined.sort((a, b) => b.dateRaw - a.dateRaw);
+        // Sort dynamically based on sortConfig
+        combined.sort((a, b) => {
+            if (a[sortConfig.key] < b[sortConfig.key]) {
+                return sortConfig.direction === 'asc' ? -1 : 1;
+            }
+            if (a[sortConfig.key] > b[sortConfig.key]) {
+                return sortConfig.direction === 'asc' ? 1 : -1;
+            }
+            return 0;
+        });
 
         // Format dates
         const formatted = combined.map(tx => ({
@@ -148,14 +158,40 @@ export function TransactionTable({ orders = [], loading = false, filters = {} })
                 (activeChLower === 'web' && txChLower.includes('ikas'));
 
             const catMatch = activeCategory === 'all' || tx.category === activeCategory;
-            return chMatch && catMatch;
+            
+            let searchMatch = true;
+            if (searchQuery.trim() !== '') {
+                const searchLower = searchQuery.trim().toLowerCase();
+                // Determine customer safely
+                const customer = tx.customerObj || CUSTOMERS[tx.customerId];
+                const custName = customer?.name?.toLowerCase() || '';
+                const prodName = tx.productName?.toLowerCase() || '';
+                const txId = tx.id?.toLowerCase() || '';
+                
+                searchMatch = prodName.includes(searchLower) || txId.includes(searchLower) || custName.includes(searchLower);
+            }
+
+            return chMatch && catMatch && searchMatch;
         });
 
         const totalPages = Math.ceil(filteredTx.length / itemsPerPage);
         const paginatedData = filteredTx.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
         return { filtered: filteredTx, paginatedData, totalPages };
-    }, [activeChannel, activeCategory, filters.dateRange, orders, currentPage]);
+    }, [activeChannel, activeCategory, filters.dateRange, orders, currentPage, sortConfig, searchQuery]);
+
+    const handleSort = (key) => {
+        let direction = 'desc';
+        if (sortConfig.key === key && sortConfig.direction === 'desc') {
+            direction = 'asc';
+        }
+        setSortConfig({ key, direction });
+    };
+
+    const SortIcon = ({ columnKey }) => {
+        if (sortConfig.key !== columnKey) return <ArrowUpDown className="w-3.5 h-3.5 opacity-30" />;
+        return sortConfig.direction === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-indigo-600" /> : <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />;
+    };
 
     return (
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col pt-0">
@@ -172,14 +208,24 @@ export function TransactionTable({ orders = [], loading = false, filters = {} })
                         </span>
                     )}
                 </div>
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3">
+                    <div className="relative group hidden sm:block">
+                        <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
+                        <input
+                            type="text"
+                            placeholder="İsim, sipariş no, ürün..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="w-40 md:w-56 lg:w-64 pl-8 pr-3 py-1.5 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all placeholder:text-slate-400 shadow-sm"
+                        />
+                    </div>
                     {orders.length > 0 && (
-                        <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-1 rounded-md border border-emerald-100">
+                        <span className="hidden xl:flex items-center gap-1.5 text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-1 rounded-md border border-emerald-100">
                             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                            Canlı Veri Yayında ({orders.length})
+                            Live ({orders.length})
                         </span>
                     )}
-                    <span className="text-sm font-medium text-indigo-600 hover:text-indigo-700 cursor-pointer">
+                    <span className="text-sm font-medium text-indigo-600 hover:text-indigo-700 cursor-pointer whitespace-nowrap">
                         Tümünü Gör
                     </span>
                 </div>
@@ -197,11 +243,21 @@ export function TransactionTable({ orders = [], loading = false, filters = {} })
                     <table className="w-full text-left text-sm">
                         <thead className="bg-slate-50/50 text-slate-500">
                             <tr>
-                                <th className="px-6 py-3 font-medium">Sipariş &amp; Kanal</th>
-                                <th className="px-6 py-3 font-medium">Tarih</th>
+                                <th className="px-6 py-3 font-medium whitespace-nowrap">Sipariş &amp; Kanal</th>
+                                <th 
+                                    className="px-6 py-3 font-medium cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                                    onClick={() => handleSort('dateRaw')}
+                                >
+                                    <div className="flex items-center gap-1.5">Tarih <SortIcon columnKey="dateRaw" /></div>
+                                </th>
                                 <th className="px-6 py-3 font-medium">Ürün</th>
                                 <th className="px-6 py-3 font-medium">Müşteri</th>
-                                <th className="px-6 py-3 font-medium text-right">Tutar</th>
+                                <th 
+                                    className="px-6 py-3 font-medium text-right cursor-pointer hover:bg-slate-100 transition-colors select-none"
+                                    onClick={() => handleSort('revenue')}
+                                >
+                                    <div className="flex items-center justify-end gap-1.5"><SortIcon columnKey="revenue" /> Tutar</div>
+                                </th>
                                 <th className="px-6 py-3 font-medium">Ödeme Durumu</th>
                                 <th className="px-6 py-3 font-medium">Sipariş Durumu</th>
                             </tr>
