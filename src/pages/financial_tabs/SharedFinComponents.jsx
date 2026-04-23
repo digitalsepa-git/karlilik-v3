@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Download, AlertCircle, TrendingUp, TrendingDown, Wand2, Box, Info } from 'lucide-react';
+import { Download, AlertCircle, TrendingUp, TrendingDown, Wand2, Box, Info, ChevronUp, ChevronDown } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { PieChart as RechartsPieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 
@@ -119,7 +119,7 @@ export const ChartCard = ({ title, subtitle, tooltip, chart, empty, action }) =>
   );
 };
 
-export const TableCard = ({ title, columns, rows, empty, loading, action, pageSize }) => {
+export const TableCard = ({ title, columns, rows, empty, loading, action, pageSize, onSort, sortConfig }) => {
   const [currentPage, setCurrentPage] = useState(1);
 
   const paginatedRows = useMemo(() => {
@@ -141,8 +141,21 @@ export const TableCard = ({ title, columns, rows, empty, loading, action, pageSi
           <thead>
             <tr className="bg-white border-b border-[#EDEDF0]">
               {columns.map((c, i) => (
-                <th key={i} className={cn("px-6 py-3 text-[11px] font-semibold uppercase text-[#7D7DA6] tracking-wider", c.align === 'right' ? 'text-right' : '')}>
-                  {c.label}
+                <th 
+                   key={i} 
+                   onClick={() => onSort && c.sortable !== false ? onSort(c.key) : undefined}
+                   className={cn(
+                     "px-6 py-3 text-[11px] font-semibold uppercase text-[#7D7DA6] tracking-wider transition-colors", 
+                     c.align === 'right' ? 'text-right' : '',
+                     onSort && c.sortable !== false ? 'cursor-pointer hover:bg-slate-50 hover:text-[#0F1223]' : ''
+                   )}
+                >
+                  <div className={cn("flex items-center gap-1", c.align === 'right' ? 'justify-end' : '')}>
+                    {c.label}
+                    {sortConfig?.key === c.key && (
+                      sortConfig.direction === 'asc' ? <ChevronUp size={14} className="text-[#514BEE]" /> : <ChevronDown size={14} className="text-[#514BEE]" />
+                    )}
+                  </div>
                 </th>
               ))}
             </tr>

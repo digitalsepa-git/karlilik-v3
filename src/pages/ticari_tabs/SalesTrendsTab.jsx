@@ -25,35 +25,51 @@ export const SalesTrendsTab = () => {
     const metrics = useMemo(() => {
         if (!orders || orders.length === 0) return null;
 
-        const dayMap = {};
+        const dayMap = {}; // for current period
+        const yoyMap = {}; // for last year same period
+        
         let totalCiro = 0;
         let totalSip = 0;
         let ciroArr = [];
 
+        // Define YoY limits
+        const yoyStart = new Date(dateStart);
+        yoyStart.setFullYear(yoyStart.getFullYear() - 1);
+        const yoyEnd = new Date(dateEnd);
+        yoyEnd.setFullYear(yoyEnd.getFullYear() - 1);
+
         orders.forEach(o => {
             if (!o.dateRaw) return;
             const d = new Date(o.dateRaw);
-            if (d < dateStart || d > dateEnd) return;
-            
             const isReturn = o.statusObj?.label === 'İade' || o.statusObj?.label === 'CANCELLED';
             if (isReturn) return;
 
-            const dayObj = d.toISOString().split('T')[0];
-            if (!dayMap[dayObj]) {
-                const trDayNames = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
-                dayMap[dayObj] = {
-                    date: dayObj,
-                    trDay: trDayNames[d.getDay()],
-                    revenue: 0, orders: 0, qty: 0
-                };
+            // Check if it's in the current range
+            if (d >= dateStart && d <= dateEnd) {
+                const dayObj = d.toISOString().split('T')[0];
+                if (!dayMap[dayObj]) {
+                    const trDayNames = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
+                    dayMap[dayObj] = {
+                        date: dayObj,
+                        trDay: trDayNames[d.getDay()],
+                        revenue: 0, orders: 0, qty: 0,
+                    };
+                }
+                dayMap[dayObj].revenue += (o.revenue || 0);
+                dayMap[dayObj].orders++;
+                dayMap[dayObj].qty += (o.quantity || 1);
+                totalCiro += (o.revenue || 0);
+                totalSip++;
             }
-
-            dayMap[dayObj].revenue += (o.revenue || 0);
-            dayMap[dayObj].orders++;
-            dayMap[dayObj].qty += (o.quantity || 1);
-            
-            totalCiro += (o.revenue || 0);
-            totalSip++;
+            // Check if it's in the YoY range
+            else if (d >= yoyStart && d <= yoyEnd) {
+                // Map it forward by 1 year to align with the current map
+                const mappedD = new Date(d);
+                mappedD.setFullYear(mappedD.getFullYear() + 1);
+                const dayObj = mappedD.toISOString().split('T')[0];
+                if (!yoyMap[dayObj]) yoyMap[dayObj] = 0;
+                yoyMap[dayObj] += (o.revenue || 0);
+            }
         });
 
         const dailyData = Object.values(dayMap).sort((a,b) => new Date(a.date) - new Date(b.date));
@@ -75,34 +91,26 @@ export const SalesTrendsTab = () => {
             }
         });
 
-        return { dailyData, totalCiro, totalSip, maxDay, anomalies, mean };
+        return { dailyData, yoyMap, totalCiro, totalSip, maxDay, anomalies, mean };
     }, [orders, dateStart, dateEnd]);
 
     if (!metrics || metrics.dailyData.length === 0) {
         return <EmptyState title="Trend Verisi Yok" message="Bu tarih aralığında satış bulunamadığı için çizgi grafiği çizilemedi." />;
     }
 
-    const { dailyData, totalCiro, totalSip, maxDay, anomalies, mean } = metrics;
+    const { dailyData, yoyMap, totalCiro, totalSip, maxDay, anomalies, mean } = metrics;
     const avgDaily = totalCiro / (_diffDays || 1);
 
     const trendData = dailyData.map(d => ({
         name: d.date,
         ciro: d.revenue,
         siparis: d.orders,
-        // Mocking last year same day
-        GecenYil: d.revenue * (Math.random() * 0.4 + 0.8)
+        GecenYil: yoyMap[d.date] || 0
     }));
 
     return (
         <div className="p-8 space-y-6 animate-in fade-in duration-300 max-w-[1440px] mx-auto w-full">
-            {/* Control Bar */}
-            <div className="flex items-center justify-end border-b border-[#EDEDF0] pb-4">
-                <div className="flex items-center bg-[#FAFAFB] p-1 rounded-lg border border-[#EDEDF0]">
-                    <button className="px-4 py-1.5 rounded-md bg-white shadow-sm text-xs font-bold text-[#0F1223]">Günlük</button>
-                    <button className="px-4 py-1.5 rounded-md text-[#7D7DA6] text-xs font-bold hover:text-[#0F1223]">Haftalık</button>
-                    <button className="px-4 py-1.5 rounded-md text-[#7D7DA6] text-xs font-bold hover:text-[#0F1223]">Aylık</button>
-                </div>
-            </div>
+            {/* Control Bar Kaldırıldı */}
 
             {/* KPIs */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -159,28 +167,48 @@ export const SalesTrendsTab = () => {
             {/* TABLOLAR */}
             <TableCard
                 title="Günlük Satış Özetleri"
+                pageSize={10}
                 columns={[
                     { key: 'tarih', label: 'Tarih', align: 'left' },
                     { key: 'gun', label: 'Gün', align: 'left' },
                     { key: 'Sipariş', label: 'Sipariş', align: 'right' },
                     { key: 'ciro', label: 'Ciro', align: 'right' },
                     { key: 'sepet', label: 'Ort. Sepet', align: 'right' },
+                    { key: 'gecenYil', label: 'Geçen Yıl Aynı Gün', align: 'right' },
                     { key: 'olay', label: 'Etkinlik / Olay', align: 'left' }
                 ]}
-                rows={[...dailyData].reverse().slice(0, 30).map(d => ({
-                    tarih: <span className="text-[#0F1223] font-medium">{d.date}</span>,
-                    gun: <span className="text-xs font-bold text-[#7D7DA6] bg-[#FAFAFB] px-2 py-1 rounded">{d.trDay}</span>,
-                    Sipariş: d.orders,
-                    ciro: <span className="font-bold">{fmt(d.revenue)}</span>,
-                    sepet: fmt(d.revenue / d.orders),
-                    olay: d.revenue > mean*1.5 ? <span className="text-[10px] uppercase font-bold px-2 py-1 bg-amber-100 text-amber-700 rounded-full">Sıradışı Yoğunluk</span> : '—'
-                }))}
+                rows={[...dailyData].reverse().map(d => {
+                    const diffToMean = d.revenue > 0 ? ((d.revenue - mean) / mean) * 100 : 0;
+                    return {
+                        tarih: <span className="text-[#0F1223] font-medium">{d.date}</span>,
+                        gun: <span className="text-xs font-bold text-[#7D7DA6] bg-[#FAFAFB] px-2 py-1 rounded">{d.trDay}</span>,
+                        Sipariş: d.orders,
+                        ciro: <span className="font-bold">{fmt(d.revenue)}</span>,
+                        sepet: fmt(d.revenue / d.orders),
+                        gecenYil: <span className="text-[#7D7DA6]">{fmt(yoyMap[d.date] || 0)}</span>,
+                        olay: (diffToMean > 50) 
+                            ? <span className="text-[10px] uppercase font-bold px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full">Yüksek Performans</span>
+                            : ((diffToMean < -50 && d.revenue > 0) 
+                                ? <span className="text-[10px] uppercase font-bold px-2 py-1 bg-red-100 text-red-700 rounded-full">Düşük Performans</span>
+                                : '—')
+                    };
+                })}
             />
 
             {/* INSIGHTS */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <InsightCard type="trend" title="Gündüz Saatleri Düşüşü" body="Salı ve Çarşamba günleri öğlen saatlerinde sipariş hacminizde -%20 pazar ortalaması altı bir seyriniz var." />
-                <InsightCard type="suggestion" title="Kampanya Zamanlaması" body="Anomaliler incelendiğinde Pazar akşamları cironun %38 arttığı tespit edildi. Bütçeyi hafta sonu odaklı sıkıştırın." />
+                <InsightCard 
+                    type={anomalies.filter(a => a.stat === 'below').length > 0 ? "alert" : "trend"} 
+                    title="Performans İzleme (Düşüşler)" 
+                    body={anomalies.filter(a => a.stat === 'below').length > 0 
+                        ? `Analiz edilen süreçte (${anomalies.filter(a => a.stat === 'below').length} gün), satışlar standart sapmanızın çok altında gerçekleşti. Kampanya kesintilerini kontrol edin.` 
+                        : "Seçili tarihlerde beklentilerin belirgin derecede altında kalan majör bir düşüş saptanmadı. Satış grafiğiniz istikrarlı."} 
+                />
+                <InsightCard 
+                    type="suggestion" 
+                    title="Satış Zirveleri" 
+                    body={maxDay ? `Son incelediğiniz periyotta ${maxDay.date} tarihi sisteminizin en verimli noktası oldu. Çoğunlukla bu dönemlerdeki pazar yatırımlarını kopyalayabilirsiniz.` : "Yeterli veri toplanıyor..."} 
+                />
             </div>
         </div>
     );

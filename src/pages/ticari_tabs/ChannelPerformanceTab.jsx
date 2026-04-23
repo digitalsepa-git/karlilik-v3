@@ -3,14 +3,15 @@ import { useData } from '../../context/DataContext';
 import { EmptyState, KpiCard, ChartCard, TableCard, InsightCard, C, ChannelBadge, CHANNEL_COLORS } from './SharedTicariComponents';
 import { AreaChart, Area, ScatterChart, Scatter, XAxis, YAxis, ZAxis, Tooltip, ResponsiveContainer, ReferenceLine, CartesianGrid } from 'recharts';
 import { ChevronRight } from 'lucide-react';
-import { variableRulesData } from '../../data/expensesData'; // Import our standard rule engine
+// variableRulesData and static rules removed, using real order line-item data instead
 
 const fmt = (val) => new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(val || 0);
 const pct = (val, d = 1) => `%${(val || 0).toLocaleString('tr-TR', { minimumFractionDigits: d, maximumFractionDigits: d })}`;
 
 export const ChannelPerformanceTab = () => {
-    const { ordersData, globalDateRange } = useData();
+    const { ordersData, globalDateRange, analyticsData } = useData();
     const { orders } = ordersData;
+    const { data: gaData } = analyticsData || {};
 
     // Filter Logic & Prev Period calculation for Growth
     const { dateStart, dateEnd, prevDateStart, prevDateEnd } = useMemo(() => {
@@ -25,6 +26,8 @@ export const ChannelPerformanceTab = () => {
     // Data Processing Engine
     const metrics = useMemo(() => {
         if (!orders || orders.length === 0) return null;
+
+        const webAdSpend = gaData?.totalAdCost || 0; // Get real total ad spend from GA
 
         const chMap = {};
         let totalCiro = 0;
@@ -69,48 +72,34 @@ export const ChannelPerformanceTab = () => {
 
             if (isReturn) {
                 channelObj.returns++;
+                // İadelerde bile oluşan faturalandırılmış kargo gideri, ilgili kanalın karlılığından eksi olarak düşülmelidir
+                const returnShipping = o.shipping || 0;
+                channelObj.totalExpenses += returnShipping;
             } else {
                 channelObj.curRevenue += orderRevenue;
                 channelObj.orders++;
                 channelObj.days[dayObj] += orderRevenue;
                 totalCiro += orderRevenue;
                 
-                // Variable Rule Cost Processing
-                let specificMarketingCost = 0;
-                let specificCommCost = 0;
-                let specificOtherExpenses = orderOriginalCogs; // Base cogs if applies
+                // Gerçek Sipariş Verilerinden ("Order Line-Item" ve API seviyesindeki hesaplamalardan) Giderlerin Alınması
+                // Kargo, komisyon, cogs (ürün maliyeti) gibi değerler artık statik rule engine yerine doğrudan CANLI sipariş objesinden (o.commission vs) akıyor.
+                const realCommission = o.commission || 0;
+                const realShipping = o.shipping || 0;
+                const realTax = o.tax || 0;
                 
-                // Estimate item count simply since actual LineItems may not be fully parsed in every mock orders
-                const itemsCount = o.lineItems ? o.lineItems.reduce((acc, item) => acc + (item.quantity || 1), 0) : 1;
+                // Toplam sipariş bazı direkt maliyet = Ürün maliyeti + Komisyon + Kargo + KDV
+                const directExpenses = orderOriginalCogs + realShipping + realTax;
 
-                variableRulesData.forEach(rule => {
-                    // Check applies
-                    if (rule.appliesTo !== 'all') {
-                        const applies = Array.isArray(rule.appliesTo) ? rule.appliesTo.some(a => rawCh.includes(a)) : rawCh.includes(rule.appliesTo);
-                        if (!applies) return;
-                    }
-                    if (rule.unit === 'return') return; // Do not apply return cost on a successful order
-
-                    let ruleAmt = 0;
-                    if (rule.type === 'percentage') {
-                        ruleAmt = orderRevenue * (rule.val1 / 100);
-                    } else if (rule.type === 'amount') {
-                        ruleAmt = rule.unit === 'sale' ? (rule.val1 * itemsCount) : rule.val1;
-                    } else if (rule.type === 'hybrid') {
-                        ruleAmt = (orderRevenue * (rule.val1 / 100)) + rule.val2;
-                    }
-
-                    // Categorize to calculate ROAS
-                    if (rule.category === 'marketing') specificMarketingCost += ruleAmt;
-                    else if (rule.category === 'commission') specificCommCost += ruleAmt;
-                    else specificOtherExpenses += ruleAmt;
-                });
-
-                channelObj.marketingCost += specificMarketingCost;
-                channelObj.commCost += specificCommCost;
-                channelObj.totalExpenses += (specificMarketingCost + specificCommCost + specificOtherExpenses);
+                channelObj.commCost += realCommission;
+                channelObj.totalExpenses += (realCommission + directExpenses);
             }
         });
+
+        // Add real GA Ad Spend entirely to the 'web' channel's expenses
+        if (chMap['web']) {
+            chMap['web'].marketingCost = webAdSpend;
+            chMap['web'].totalExpenses += webAdSpend;
+        }
 
         const channelStats = Object.values(chMap)
             .filter(ch => ch.curRevenue > 0 || ch.prevRevenue > 0)
@@ -149,7 +138,7 @@ export const ChannelPerformanceTab = () => {
         });
 
         return { channelStats, totalCiro, areaData };
-    }, [orders, dateStart, dateEnd, prevDateStart, prevDateEnd]);
+    }, [orders, dateStart, dateEnd, prevDateStart, prevDateEnd, gaData]);
 
     if (!metrics || metrics.channelStats.length === 0) {
         return <EmptyState title="Kanal Verisi Yok" message="Bu tarih aralığında sipariş kanallarından satış verisi akmamış." />;
@@ -279,13 +268,11 @@ export const ChannelPerformanceTab = () => {
             {/* SKORKARTLAR */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {channelStats.slice(0, 4).map(ch => {
-                    const score = (ch.marj > 20 ? 4 : (ch.marj > 5 ? 2 : 0)) + (ch.growth > 0 ? 3 : 1) + (ch.iadeOrani < 8 ? 3 : 1);
                     return (
                         <div key={ch.key} className="bg-white border border-[#EDEDF0] p-5 rounded-xl flex items-center justify-between shadow-sm hover:border-slate-300 transition-colors">
                             <div>
                                 <div className="flex items-center gap-3 mb-3">
                                     <div className="font-extrabold text-[#0F1223] capitalize tracking-tight flex items-center gap-1.5 opacity-90"><ChannelBadge channelId={ch.key} channelObj={ch} /></div>
-                                    <span className={`text-[11px] font-black px-2 py-1 rounded tracking-wide ${score >= 7 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}`}>Sağlamlık Skoru: {score}/10</span>
                                 </div>
                                 <div className="grid grid-cols-2 gap-x-12 gap-y-2">
                                     <div className="text-[12px] text-[#7D7DA6] font-medium flex justify-between">Net Ciro: <span className="text-[#0F1223] font-bold">{fmt(ch.revenue)}</span></div>
@@ -293,9 +280,6 @@ export const ChannelPerformanceTab = () => {
                                     <div className="text-[12px] text-[#7D7DA6] font-medium flex justify-between">Ay Büyümesi: <span className={ch.growth > 0 ? "text-emerald-500 font-bold" : "text-red-500 font-bold"}>{ch.growth > 0 ? `+${pct(ch.growth)}` : pct(ch.growth)}</span></div>
                                 </div>
                             </div>
-                            <button className="h-10 px-4 rounded-lg bg-[#FAFAFB] hover:bg-[#F3F1FF] hover:text-[#514BEE] text-[#0F1223] text-[12px] font-bold transition-colors flex items-center gap-1.5 border border-[#EDEDF0]">
-                                Rapor İncele <ChevronRight size={14} />
-                            </button>
                         </div>
                     );
                 })}

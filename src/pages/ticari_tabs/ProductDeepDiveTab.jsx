@@ -13,6 +13,14 @@ export const ProductDeepDiveTab = () => {
     const { orders } = ordersData;
     
     const [searchQuery, setSearchQuery] = useState('');
+    const [sortConfig, setSortConfig] = useState({ key: 'revenue', direction: 'desc' });
+
+    const handleSort = (key) => {
+        setSortConfig(current => ({
+            key,
+            direction: current.key === key && current.direction === 'desc' ? 'asc' : 'desc'
+        }));
+    };
 
     // Pre-calculate Product Metrics
     const metrics = useMemo(() => {
@@ -34,9 +42,10 @@ export const ProductDeepDiveTab = () => {
                 if (o.sku && pMap[o.sku]) {
                     pMap[o.sku].soldQty += (o.quantity || 1);
                     pMap[o.sku].revenue += (o.revenue || 0);
-                    pMap[o.sku].cogsTotal += (o.cogs || 0);
+                    // Use actual total fulfillment cost (cogs+shipping+comm+tax) from order data
+                    pMap[o.sku].cogsTotal += (o.cost || o.cogs || 0);
                     totalCiro += (o.revenue || 0);
-                    totalKarlik += ((o.revenue || 0) - (o.cogs || 0));
+                    totalKarlik += ((o.revenue || 0) - (o.cost || o.cogs || 0));
                 }
             }
         });
@@ -46,7 +55,8 @@ export const ProductDeepDiveTab = () => {
             const netKar = p.revenue - p.cogsTotal;
             const marj = p.revenue > 0 ? (netKar / p.revenue) * 100 : 0;
             const returnRate = (p.soldQty + p.returns) > 0 ? (p.returns / (p.soldQty + p.returns)) * 100 : 0;
-            const stok = p.stock || (Math.floor(Math.random() * 200)); // Mocked stock if undefined
+            // Prevent true zeros from triggering the pseudo-random fallback
+            const stok = p.stock !== undefined ? p.stock : 0; 
             const devir = p.soldQty > 0 ? (stok / (p.soldQty/30)) : Infinity;
             
             return {
@@ -55,15 +65,24 @@ export const ProductDeepDiveTab = () => {
         }).sort((a,b) => b.revenue - a.revenue);
 
         // Pareto cumulative logic
-        let acc = 0;
-        const paretoData = pList.slice(0, 50).map((p, i) => {
-            acc += (p.revenue || 0);
+        let accCiro = 0;
+        const paretoDataFull = pList.map((p, i) => {
+            accCiro += p.revenue;
+            const percentageOfTotal = totalCiro > 0 ? (p.revenue / totalCiro) * 100 : 0;
+            const cumilative = totalCiro > 0 ? (accCiro / totalCiro) * 100 : 0;
             return {
-                name: (p.name || '').substring(0, 15) + '...',
+                name: (p.name || '').split('|')[0].substring(0, 18) + ((p.name?.split('|')[0]?.length > 18) ? '...' : ''),
                 ciro: p.revenue,
-                kumulatifPct: totalCiro > 0 ? (acc / totalCiro) * 100 : 0
+                yuzde: percentageOfTotal,
+                kumulatifPct: cumilative,
+                isTop80: cumilative <= 80
             };
         });
+        
+        // Sadece cironun %80'ini yapan klasman + onlara en yakın 3-4 ürünü gösterelim ki grafik net ve anlaşılır olsun.
+        const top80Index = paretoDataFull.findIndex(p => p.kumulatifPct > 80);
+        const cutoffLimit = top80Index !== -1 ? Math.min(top80Index + 4, paretoDataFull.length) : Math.min(15, paretoDataFull.length);
+        const paretoData = paretoDataFull.slice(0, Math.max(7, cutoffLimit)); // En az 7 bar göster
 
         // Category Treemap logic
         const catMap = {};
@@ -87,6 +106,25 @@ export const ProductDeepDiveTab = () => {
 
     const filteredProducts = pList.filter(p => p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku?.toLowerCase().includes(searchQuery.toLowerCase()));
 
+    const sortedProducts = useMemo(() => {
+        let sortable = [...filteredProducts];
+        if (sortConfig.key) {
+            sortable.sort((a, b) => {
+                const aVal = a[sortConfig.key];
+                const bVal = b[sortConfig.key];
+                
+                if (aVal === bVal) return 0;
+                
+                if (typeof aVal === 'string' && typeof bVal === 'string') {
+                    return sortConfig.direction === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+                }
+                
+                return sortConfig.direction === 'asc' ? (aVal < bVal ? -1 : 1) : (aVal > bVal ? -1 : 1);
+            });
+        }
+        return sortable;
+    }, [filteredProducts, sortConfig]);
+
     const starProduct = pList[0];
     const avgMarj = totalCiro > 0 ? (totalKarlik / totalCiro) * 100 : 0;
 
@@ -102,81 +140,89 @@ export const ProductDeepDiveTab = () => {
 
     return (
         <div className="p-8 space-y-6 animate-in fade-in duration-300 max-w-[1440px] mx-auto w-full">
-            {/* Control Bar */}
-            <div className="flex items-center gap-4 bg-white border border-[#EDEDF0] p-4 rounded-xl shadow-sm">
-                <div className="relative w-72">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#7D7DA6]" size={16} />
-                    <input 
-                        type="text" 
-                        placeholder="SKU, Barkod, veya Ürün Adı..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-4 py-2 border border-[#EDEDF0] rounded-lg text-sm bg-[#FAFAFB] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#514BEE]/20 transition-all"
-                    />
-                </div>
-                <button className="px-4 py-2 flex items-center gap-2 border border-[#EDEDF0] rounded-lg text-[13px] font-bold text-[#0F1223] hover:bg-[#FAFAFB]"><Filter size={14}/> Kategori İzole Et</button>
-            </div>
+
 
             {/* KPIs */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <KpiCard title="Toplam SKU (Aktif)" value={pList.length} delta="Stokta" tone="neutral" />
-                <KpiCard title="Yıldız Ürün" value={starProduct?.sku || '—'} delta={`${fmt(starProduct?.revenue)} ciro`} tone="positive" />
-                <KpiCard title="Zombie SKU (0 Satış)" value={zombieCount} delta="Son 30 Gün" tone={zombieCount > 0 ? "negative" : "positive"} />
-                <KpiCard title="Portföy Kar Marjı" value={pct(avgMarj)} delta="Ağırlıklı Ortalama" tone={avgMarj > 20 ? "positive" : "warning"} />
+                <KpiCard 
+                    title="Toplam SKU (Aktif)" 
+                    value={pList.length} 
+                    delta="Stokta" 
+                    tone="neutral" 
+                    tooltip="Sistemde kayıtlı ve envanterinizde güncel olarak takip edilen toplam ürün çeşidi sayısını (varyantlarıyla birlikte) gösterir."
+                />
+                <KpiCard 
+                    title="Yıldız Ürün" 
+                    value={<div className="text-lg leading-tight truncate max-w-[160px]" title={starProduct?.name}>{starProduct?.name?.split('|')[0]?.trim() || '—'}</div>}
+                    delta={`${fmt(starProduct?.revenue)} ciro`} 
+                    tone="positive" 
+                    tooltip="Seçili tarih aralığında size en çok ciro getiren, kataloğunuzun lider ve en popüler ürünü."
+                />
+                <KpiCard 
+                    title="Zombie SKU (0 Satış)" 
+                    value={zombieCount} 
+                    delta="Son 30 Gün" 
+                    tone={zombieCount > 0 ? "negative" : "positive"} 
+                    tooltip="Son 30 gün içinde katalogda yer almasına ve stokta olmasına rağmen hiç satılmamış olan, envanter yükü (atıl) yaratan ürün sayınız."
+                />
+                <KpiCard 
+                    title="Portföy Kar Marjı" 
+                    value={pct(avgMarj)} 
+                    delta="Ağırlıklı Ortalama" 
+                    tone={avgMarj > 20 ? "positive" : "warning"} 
+                    tooltip="Satılan tüm ürünlerinizin Ciro, Kargo, Platform Komisyonu, Ürün Maliyeti (COGS) ve KDV Vergi Kesintisi düşüldükten sonra cebinize giren ağırlıklı net kârlılık ortalaması."
+                />
             </div>
 
-            {/* CHARTS */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[340px]">
-                <ChartCard 
-                    title="80/20 Pareto Analizi"
-                    subtitle="Hangi ürünler cironun %80'ini oluşturuyor?"
-                    chart={
-                        <ResponsiveContainer width="100%" height="100%">
-                            <ComposedChart data={paretoData} margin={{ top: 20, right: 0, left: 10, bottom: 0 }}>
-                                <XAxis dataKey="name" hide />
-                                <YAxis yAxisId="left" tickFormatter={(v) => `${v/1000}K`} tick={{ fontSize: 10, fill: '#7D7DA6' }} axisLine={false} tickLine={false} />
-                                <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => `%${v}`} tick={{ fontSize: 10, fill: '#10B981' }} axisLine={false} tickLine={false} />
-                                <Tooltip formatter={(val, name) => [name === 'ciro' ? fmt(val) : pct(val), name === 'ciro' ? 'Ciro' : 'Birikimli Kümülatif %']} />
-                                <Bar yAxisId="left" dataKey="ciro" fill="#E0DDFF" radius={[2,2,0,0]} />
-                                <Line yAxisId="right" type="monotone" dataKey="kumulatifPct" stroke="#10B981" strokeWidth={3} dot={false} />
-                                <ReferenceLine y={80} yAxisId="right" stroke="#EF4444" strokeDasharray="3 3" label={{ position: 'insideTopLeft', value: '%80 Ciro Sınırı', fill: '#EF4444', fontSize: 10 }} />
-                            </ComposedChart>
-                        </ResponsiveContainer>
-                    }
-                />
-                <ChartCard 
-                    title="Kategori Dağılımı Treemap"
-                    chart={
-                        <ResponsiveContainer width="100%" height="100%">
-                            <Treemap data={treeData} dataKey="size" ratio={4/3} stroke="#fff" content={<CustomTreemap />} />
-                        </ResponsiveContainer>
-                    }
-                />
-            </div>
+
 
             {/* MASTER TABLO */}
             <TableCard
                 title="Ürün Deep-Dive Master Tablosu"
-                action={<span>Toplam: {filteredProducts.length} Sonuç</span>}
+                pageSize={10}
+                onSort={handleSort}
+                sortConfig={sortConfig}
+                action={
+                    <div className="flex items-center gap-4">
+                        <div className="relative">
+                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#7D7DA6]" size={14} />
+                            <input 
+                                type="text" 
+                                placeholder="Tabloda ara..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="pl-8 pr-3 py-1.5 border border-[#EDEDF0] rounded-md text-[12px] bg-white focus:outline-none focus:ring-1 focus:ring-[#514BEE] transition-all w-48"
+                            />
+                        </div>
+                        <span className="text-[13px] font-semibold text-[#7D7DA6]">Toplam: {sortedProducts.length} Sonuç</span>
+                    </div>
+                }
                 columns={[
-                    { key: 'sku', label: 'SKU', align: 'left', className: 'font-mono text-xs' },
-                    { key: 'isim', label: 'Ürün Adı', align: 'left', className: 'line-clamp-2 max-w-[200px]' },
+                    { key: 'sku', label: 'SKU', align: 'left', className: 'font-mono text-xs w-[100px]' },
+                    { key: 'name', label: 'Ürün Adı', align: 'left', className: 'min-w-[350px] max-w-[450px]' },
                     { key: 'stok', label: 'Stok', align: 'right' },
-                    { key: 'satis', label: 'Sipariş (30g)', align: 'right' },
-                    { key: 'ciro', label: 'Ciro (30g)', align: 'right' },
+                    { key: 'soldQty', label: 'Sipariş (30g)', align: 'right' },
+                    { key: 'revenue', label: 'Ciro (30g)', align: 'right' },
                     { key: 'marj', label: 'Marj %', align: 'right' },
                     { key: 'devir', label: 'Stok Devir', align: 'right' },
-                    { key: 'iade', label: 'İade %', align: 'right' }
+                    { key: 'returnRate', label: 'İade %', align: 'right' }
                 ]}
-                rows={filteredProducts.slice(0, 50).map((p, i) => ({
-                    sku: p.sku || `SKU-${i}`,
-                    isim: <span className="font-semibold text-[#0F1223]">{p.name}</span>,
+                rows={sortedProducts.map((p, i) => ({
+                    sku: <span className="text-[10px] text-[#7D7DA6] font-medium tracking-wide">{p.sku || `SKU-${i}`}</span>,
+                    name: (
+                        <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-md shrink-0 bg-white border border-[#EDEDF0] overflow-hidden flex items-center justify-center">
+                                <img src={p.img || '/assets/products/fallback_0.jpg'} alt={p.name} className="max-w-full max-h-full object-contain p-0.5" />
+                            </div>
+                            <span className="text-[12px] font-semibold text-[#0F1223] leading-snug line-clamp-2">{p.name}</span>
+                        </div>
+                    ),
                     stok: <span className={p.stok < 10 ? "text-red-500 font-bold" : "text-emerald-500 font-bold"}>{p.stok}</span>,
-                    satis: p.soldQty,
-                    ciro: <span className="font-bold">{fmt(p.revenue)}</span>,
+                    soldQty: p.soldQty,
+                    revenue: <span className="font-bold">{fmt(p.revenue)}</span>,
                     marj: <span className="px-2 py-0.5 rounded bg-[#F3F1FF] text-[#514BEE] font-bold">{pct(p.marj)}</span>,
                     devir: p.devir === Infinity ? '—' : `${Math.round(p.devir)} gün`,
-                    iade: <span className={p.returnRate > 10 ? "text-red-500" : ""}>{pct(p.returnRate)}</span>
+                    returnRate: <span className={p.returnRate > 10 ? "text-red-500" : ""}>{pct(p.returnRate)}</span>
                 }))}
             />
 
