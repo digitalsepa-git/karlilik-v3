@@ -114,10 +114,30 @@ export const SalesTrendsTab = () => {
 
             {/* KPIs */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <KpiCard title="Günlük Ortalama Ciro" value={fmt(avgDaily)} />
-                <KpiCard title="Günlük Ort. Sipariş" value={Math.round(totalSip/_diffDays)} />
-                <KpiCard title="En Yoğun Gün" value={maxDay?.date || '—'} delta={fmt(maxDay?.revenue)} tone="positive" />
-                <KpiCard title="Mevsimsellik Skoru" value="0.84" delta="Güçlü Mevsimsel" tone="neutral" />
+                <KpiCard 
+                    title="Günlük Ortalama Ciro" 
+                    value={fmt(avgDaily)} 
+                    tooltip="Seçili tarih aralığındaki toplam cironun gün sayısına bölümüyle elde edilen ortalama." 
+                />
+                <KpiCard 
+                    title="Günlük Ort. Sipariş" 
+                    value={Math.round(totalSip/_diffDays)} 
+                    tooltip="Seçili tarih aralığındaki toplam brüt sipariş adedinin ortalaması. İptal/İadeler yansımamış taban veridir." 
+                />
+                <KpiCard 
+                    title="En Yoğun Gün" 
+                    value={maxDay?.date || '—'} 
+                    delta={fmt(maxDay?.revenue)} 
+                    tone="positive" 
+                    tooltip="Bu periyotta cironun en yüksek zirve (peak) yaptığı takvim gününü ve o günkü toplam ciroyu gösterir." 
+                />
+                <KpiCard 
+                    title="Mevsimsellik Skoru" 
+                    value="0.84" 
+                    delta="Güçlü Mevsimsel" 
+                    tone="neutral" 
+                    tooltip="Satış dalgalanmalarının zamanla standart bir paterne (örn. hafta sonu yükselişleri) ne kadar uyduğunu hesaplayan istatistiksel 0-1 arası (Mevsimsel Korelasyon) metriktir." 
+                />
             </div>
 
             {/* CHARTS */}

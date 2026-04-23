@@ -16,36 +16,103 @@ export const BasketTab = () => {
         let totalQty = 0;
         let totalVal = 0;
 
-        // To generate interesting UI, we simulate some Association Rules based on actual categories. 
-        // In real app, this runs the Apriori logic from brief on `orders` items.
-        
+        const baskets = [];
+        const itemCounts = {};
+        const pairCounts = {};
+        const sizeCounts = { 1: { c: 0, v: 0 }, 2: { c: 0, v: 0 }, 3: { c: 0, v: 0 }, 4: { c: 0, v: 0 } };
+
         orders.forEach(o => {
             if (o.statusObj?.label === 'İade' || o.statusObj?.label === 'CANCELLED') return;
             totalVal += (o.revenue || 0);
-            const q = o.quantity || 1;
-            totalQty += q;
-            if (q > 1) multiItemCount++;
+
+            // True lineItems parsing
+            const items = o.lineItems || [];
+            let basketQty = 0;
+            const uniqueProductNamesInBasket = new Set();
+            
+            items.forEach(i => {
+                basketQty += (i.quantity || 1);
+                uniqueProductNamesInBasket.add(i.name);
+            });
+
+            // Fallback to legacy parsing if lineItems wasn't formed properly
+            if (items.length === 0) {
+                basketQty = o.quantity || 1;
+                uniqueProductNamesInBasket.add(o.productName);
+            }
+
+            totalQty += basketQty;
+            if (basketQty > 1) multiItemCount++;
+            
+            // For basket sizes
+            if (basketQty === 1) { sizeCounts[1].c++; sizeCounts[1].v += o.revenue; }
+            else if (basketQty === 2) { sizeCounts[2].c++; sizeCounts[2].v += o.revenue; }
+            else if (basketQty === 3) { sizeCounts[3].c++; sizeCounts[3].v += o.revenue; }
+            else { sizeCounts[4].c++; sizeCounts[4].v += o.revenue; }
+
+            const uProducts = Array.from(uniqueProductNamesInBasket);
+            baskets.push(uProducts);
+
+            uProducts.forEach(p => {
+                itemCounts[p] = (itemCounts[p] || 0) + 1;
+            });
+
+            for (let i = 0; i < uProducts.length; i++) {
+                for (let j = i + 1; j < uProducts.length; j++) {
+                    const pair = [uProducts[i], uProducts[j]].sort().join('||');
+                    pairCounts[pair] = (pairCounts[pair] || 0) + 1;
+                }
+            }
         });
 
-        // Synthetic Rules for demonstration format requested by brief
-        const rules = [
-            { id: 1, from: 'Nemlendirici Krem', to: 'Güneş Kremi', lift: 4.2, conf: 68, sup: 12 },
-            { id: 2, from: 'Göz Çevresi Serumu', to: 'C Vitamini', lift: 3.8, conf: 55, sup: 8 },
-            { id: 3, from: 'Hello Kitty Set', to: 'Aksesuar', lift: 2.1, conf: 42, sup: 15 },
-            { id: 4, from: 'Anti-Aging Cihaz', to: 'Yüz Temizleme Jeli', lift: 1.8, conf: 35, sup: 6 },
-            { id: 5, from: 'Tonik', to: 'Pamuk', lift: 4.8, conf: 82, sup: 22 }
-        ].sort((a,b) => b.lift - a.lift);
+        // Generate Rules
+        let rulesArr = [];
+        const totalBaskets = baskets.length;
 
-        // Basket Size Distribution
+        Object.entries(pairCounts).forEach(([pairStr, count]) => {
+            if (count < 2) return; // Ignore very rare coincidence
+            const [p1, p2] = pairStr.split('||');
+            
+            // Rule p1 -> p2
+            const conf1 = count / itemCounts[p1];
+            const lift1 = conf1 / (itemCounts[p2] / totalBaskets);
+            if (lift1 > 1) {
+                rulesArr.push({ id: `${p1}-${p2}`, from: p1, to: p2, sup: Number(((count / totalBaskets) * 100).toFixed(1)), conf: Number((conf1 * 100).toFixed(1)), lift: lift1, count });
+            }
+
+            // Rule p2 -> p1
+            const conf2 = count / itemCounts[p2];
+            const lift2 = conf2 / (itemCounts[p1] / totalBaskets);
+            if (lift2 > 1) {
+                rulesArr.push({ id: `${p2}-${p1}`, from: p2, to: p1, sup: Number(((count / totalBaskets) * 100).toFixed(1)), conf: Number((conf2 * 100).toFixed(1)), lift: lift2, count });
+            }
+        });
+
+        // De-duplicate symmetric rules just taking the direction with highest confidence
+        const rulesMap = new Map();
+        rulesArr.forEach(r => {
+            const pairKey = [r.from, r.to].sort().join('||');
+            if (rulesMap.has(pairKey)) {
+                if (r.conf > rulesMap.get(pairKey).conf) rulesMap.set(pairKey, r);
+            } else {
+                rulesMap.set(pairKey, r);
+            }
+        });
+        
+        const topRules = Array.from(rulesMap.values())
+             .sort((a,b) => b.lift - a.lift)
+             .slice(0, 10); // Show max 10 rules
+
         const distData = [
-            { size: '1 Ürün', count: orders.length - multiItemCount, ciro: totalVal * 0.4 },
-            { size: '2 Ürün', count: Math.floor(multiItemCount * 0.7), ciro: totalVal * 0.35 },
-            { size: '3 Ürün', count: Math.floor(multiItemCount * 0.2), ciro: totalVal * 0.15 },
-            { size: '4+ Ürün', count: Math.floor(multiItemCount * 0.1), ciro: totalVal * 0.10 }
+            { size: '1 Ürün', count: sizeCounts[1].c, ciro: sizeCounts[1].v },
+            { size: '2 Ürün', count: sizeCounts[2].c, ciro: sizeCounts[2].v },
+            { size: '3 Ürün', count: sizeCounts[3].c, ciro: sizeCounts[3].v },
+            { size: '4+ Ürün', count: sizeCounts[4].c, ciro: sizeCounts[4].v }
         ];
 
         return { 
-            distData, rules, multiItemCount, totalQty, totalVal, count: orders.length 
+            distData, rules: topRules, multiItemCount, totalQty, totalVal, count: orders.length,
+            singleOrderPct: totalBaskets > 0 ? (sizeCounts[1].c / totalBaskets) : 0
         };
 
     }, [orders]);
@@ -62,28 +129,14 @@ export const BasketTab = () => {
         <div className="p-8 space-y-6 animate-in fade-in duration-300 max-w-[1440px] mx-auto w-full">
             {/* KPIs */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <KpiCard title="Çoklu Ürün Sipariş Oranı" value={`%${((multiItemCount / count)*100).toFixed(1)}`} delta=">1 Ürün/Satır İçeren" tone="positive" />
-                <KpiCard title="Ortalama Sepet Büyüklüğü" value={(totalQty / count).toFixed(1)} delta="Adet/Sipariş" tone="neutral" />
-                <KpiCard title="Ortalama Sepet Değeri (AOV)" value={fmt(aov)} delta="Sipariş Başına" tone="positive" />
-                <KpiCard title="En Güçlü Kural Lift Skoru" value={rules[0]?.lift.toFixed(1)} delta={`${rules[0]?.from} -> ${rules[0]?.to}`} tone="positive" />
+                <KpiCard title="Çoklu Ürün Sipariş Oranı" value={`%${((multiItemCount / count) * 100).toFixed(1)}`} delta=">1 Ürün/Satır İçeren" tone="positive" tooltip="Tüm siparişlerinizin içerisinde, sepetinde en az iki farklı veya aynı üründen birden fazla ürün barındıran kümülatif siparişlerin oranı." />
+                <KpiCard title="Ortalama Sepet Büyüklüğü" value={(totalQty / count).toFixed(1)} delta="Adet/Sipariş" tone="neutral" tooltip="Her bir sipariş başına düşen ortalama ürün (item) adedi (toplam satılan miktar / toplam sipariş sayısı)." />
+                <KpiCard title="Ortalama Sepet Değeri (AOV)" value={fmt(aov)} delta="Sipariş Başına" tone="positive" tooltip="Average Order Value. Bir tamamlama/checkout döngüsünde bırakılan cironun tüm tamamlanmış siparişlere ortalaması." />
+                <KpiCard title="En Güçlü Kural Lift Skoru" value={rules.length > 0 ? rules[0].lift.toFixed(1) : '-'} delta={rules.length > 0 ? `${rules[0].from.substring(0,8)}... ->` : 'Yetersiz Veri'} tone={rules.length > 0 ? "positive" : "neutral"} tooltip="Ana ürünü alan kitlenin yan ürünü normalden ne kadar (x kat) daha fazla almaya meyilli olduğunu gösteren çekim/destek katsayısı." />
             </div>
 
             {/* CHARTS */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[400px]">
-                <ChartCard 
-                    title="En Güçlü Birlikte Alım İlişkileri (Lift > 1)"
-                    chart={
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={rules} layout="vertical" margin={{ top: 10, right: 30, left: 90, bottom: 0 }}>
-                                <XAxis type="number" hide />
-                                <YAxis dataKey="from" type="category" tick={{ fontSize: 10, fill: '#0F1223' }} axisLine={false} tickLine={false} />
-                                <Tooltip formatter={(val, name) => [val, 'Lift Skoru']} cursor={{fill: '#F4F4F8'}} />
-                                <ReferenceLine x={1} stroke="#EF4444" strokeDasharray="3 3" label={{ position: 'top', value: 'Bağımsız Noktası' }} />
-                                <Bar dataKey="lift" fill={C.primary} radius={[0,2,2,0]} barSize={15} />
-                            </BarChart>
-                        </ResponsiveContainer>
-                    }
-                />
+            <div className="h-[400px]">
                 <ChartCard 
                     title="Sepet Büyüklüğü Dağılımı ve Ciro Etkisi"
                     chart={
@@ -124,8 +177,21 @@ export const BasketTab = () => {
             />
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <InsightCard type="suggestion" title="Çapraz Satış Fırsatı" body="Nemlendirici Krem alanların %68'i Güneş Kremi de alıyor. Bu iki ürünü 'Günlük Bakım Seti' olarak paketlerseniz AOV'iniz %12 artabilir." />
-                <InsightCard type="trend" title="Tek Ürün Tuzağı" body="Cironuzun %40'ı hala tek ürünlü siparişlere dayanıyor. Checkout sayfasında Sepette Ek İndirim pop-up'ı testi önerilir." />
+                {rules.length > 0 ? (
+                    <InsightCard 
+                        type="suggestion" 
+                        title="Dinamik Çapraz Satış Fırsatı" 
+                        body={`${rules[0].from} alanların %${rules[0].conf}'i ${rules[0].to} de alıyor. Bu iki ürünü paketlerseniz veya checkout'ta öneri gösterirseniz sipariş değerinizi (AOV) hızlıca artırabilirsiniz.`} 
+                    />
+                ) : (
+                    <InsightCard type="trend" title="Birlikte Alım Hacmi Yok" body="Sepetlerde yeterli oranda tekrar eden birlikte alım eşleşmesi bulunamadı." />
+                )}
+                
+                <InsightCard 
+                    type={metrics.singleOrderPct > 0.7 ? "alert" : "trend"} 
+                    title={metrics.singleOrderPct > 0.7 ? "Tek Ürün Tuzağı Alarmı" : "Sepetler Karışık ve Hacimli"} 
+                    body={`Müşterilerinizin %${(metrics.singleOrderPct * 100).toFixed(0)}'u sadece tek ürünlü sipariş oluşturuyor. Sepette bir eşik (Örn: 2 ürün alana indirim) belirleyerek adeti yükseltmeyi deneyebilirsiniz.`} 
+                />
             </div>
 
         </div>

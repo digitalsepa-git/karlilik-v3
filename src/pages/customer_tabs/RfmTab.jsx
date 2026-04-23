@@ -19,13 +19,15 @@ export const RfmTab = () => {
 
         orders.forEach(o => {
             if (o.statusObj?.label === 'İade' || o.statusObj?.label === 'CANCELLED') return;
-            const cId = o.customerObj?.name || 'Anonim Müşteri';
-            if (cId === 'Anonim Müşteri' && o.id) return; // Skip completely anonymous if possible, or group them?
+            if (!o.customerId) return; // Skip totally anonymous orders for RFM
+            
+            const cId = o.customerId;
+            const cName = o.customerObj?.name || 'Anonim Müşteri';
 
             if (!customerMap[cId]) {
                 customerMap[cId] = {
                     id: cId,
-                    name: cId,
+                    name: cName,
                     orders: 0,
                     revenue: 0,
                     lastOrderDate: new Date('2000-01-01'),
@@ -149,10 +151,34 @@ export const RfmTab = () => {
         <div className="p-8 space-y-6 animate-in fade-in duration-300 max-w-[1440px] mx-auto w-full">
             {/* KPIs */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <KpiCard title="Toplam İşlenen Müşteri" value={segmented.length} delta="Tekil Alıcı" tone="neutral" />
-                <KpiCard title="Champion & Loyal Sayısı" value={champCount} delta={pct(champCount / segmented.length)} tone="positive" />
-                <KpiCard title="Risk Altındaki Değerliler" value={riskCount} delta="At Risk / Can't Lose Them" tone={riskCount > 20 ? "negative" : "warning"} />
-                <KpiCard title="Ortalama RFM Skoru" value={avgScore.toFixed(1)} delta="x / 5" tone="positive" />
+                <KpiCard 
+                    title="Toplam İşlenen Müşteri" 
+                    value={segmented.length} 
+                    delta="Tekil Alıcı" 
+                    tone="neutral" 
+                    tooltip="Veri kaynağındaki siparişlerin ayrıştırılmasıyla elde edilen, RFM algoritmasına tabi tutulmuş benzersiz (tekil) müşteri sayısı." 
+                />
+                <KpiCard 
+                    title="Champion & Loyal Sayısı" 
+                    value={champCount} 
+                    delta={pct(champCount / segmented.length)} 
+                    tone="positive" 
+                    tooltip="Son zamanlarda alışveriş yapmış, sık satın alan ve yüksek ciro bırakan en kazançlı ve sadık müşteri segmentleriniz." 
+                />
+                <KpiCard 
+                    title="Risk Altındaki Değerliler" 
+                    value={riskCount} 
+                    delta="At Risk / Can't Lose Them" 
+                    tone={riskCount > 20 ? "negative" : "warning"} 
+                    tooltip="Geçmişte sık ve yüklü alışveriş yapmış ancak normal alım döngüsünü aşmış (uzun süredir sepet oluşturmamış) ve acil reaktivasyon isteyen müşteriler." 
+                />
+                <KpiCard 
+                    title="Ortalama RFM Skoru" 
+                    value={avgScore.toFixed(1)} 
+                    delta="x / 5" 
+                    tone="positive" 
+                    tooltip="Tüm müşterilerinizin Recency (Yenilik), Frequency (Sıklık) ve Monetary (Ciro) quintile (beşli öbek) puanlarının elde edilen genel ortalaması." 
+                />
             </div>
 
             {/* CHARTS */}
@@ -186,6 +212,34 @@ export const RfmTab = () => {
                         </ResponsiveContainer>
                     }
                 />
+            </div>
+
+
+            {/* SEGMENT SÖZLÜĞÜ */}
+            <div className="bg-white p-6 rounded-xl border border-[#EDEDF0]">
+                <h3 className="text-[14px] font-bold text-[#0F1223] mb-4">RFM Segmentasyon Terminolojisi (Sözlük)</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    {[
+                        { k: 'champion', t: 'Çok yeni, çok sık, çok kazançlı sipariş döngüsü.', n: 'Champion' },
+                        { k: 'loyal', t: 'Frekansı yüksek, sizi sürekli tercih eden kitle.', n: 'Loyal' },
+                        { k: 'potentialLoyal', t: 'Düzenli alışverişleriyle gelişmeye açık olanlar.', n: 'Potential Loyalist' },
+                        { k: 'newCustomer', t: 'Yakın zamanda ilk siparişini vermiş müşteriler.', n: 'New Customer' },
+                        { k: 'promising', t: 'Frekansı yeni oturan ve sadakat potansiyeli olanlar.', n: 'Promising' },
+                        { k: 'needAttention', t: 'Ortalama seviyede ancak eski sıklığını kaybedenler.', n: 'Need Attention' },
+                        { k: 'aboutToSleep', t: 'Azalan frekans ile sizi unutmaya başlayan kullanıcılar.', n: 'About To Sleep' },
+                        { k: 'atRisk', t: 'Eskiden çok alışveriş yapıp uzaklaşan önemli kitle.', n: 'At Risk' },
+                        { k: 'cantLoseThem', t: 'En değerlilerinizdi, uzun süredir yoklar. Acil kampanya şart.', n: 'Can\'t Lose Them' },
+                        { k: 'hibernating', t: 'Kış uykusuna yatmış, düşük frekanslı uzak müşteriler.', n: 'Hibernating' },
+                    ].map(s => (
+                        <div key={s.k} className="flex gap-2">
+                            <div className="w-3 h-3 rounded-full mt-1 shrink-0" style={{ backgroundColor: SEGMENT_COLORS[s.k] }} />
+                            <div>
+                                <div className="text-xs font-bold" style={{ color: SEGMENT_COLORS[s.k] }}>{s.n}</div>
+                                <div className="text-[11px] text-[#7D7DA6] leading-tight mt-0.5">{s.t}</div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
             </div>
 
             {/* Scatter RFM */}
@@ -235,8 +289,16 @@ export const RfmTab = () => {
 
             {/* INSIGHTS */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <InsightCard type="suggestion" title="Champion Aksiyonu" body="En değerli müşterileriniz tüm cironuzun çoğunu oluşturuyor. Özel WhatsApp numarası veya VIP indirim kodu ile bağlanmalarını güçlendirin." />
-                <InsightCard type="alert" title="Risk Uyarısı" body={`${riskCount} adet değerli müşteri uykuya geçmek üzere. Geri kazanım e-posta otomasyonlarını anında aktif edin.`} />
+                <InsightCard 
+                    type={champCount > 0 ? "suggestion" : "trend"} 
+                    title={champCount > 0 ? "Champion Aksiyonu" : "Geliştirilebilir Sadakat"} 
+                    body={champCount > 0 ? `RFM Veritabanınızda ${champCount} adet Şampiyon seviyesinde karlı müşteri tespit edildi. Bu gruba VIP indirim veya erken erişim kampanyaları düzenleyerek bağlılıklarını pekiştirin.` : "Kullanıcılarınız henüz Şampiyon sadakat seviyesine ulaşmadı. RFM skorlarını artırmak için sadakat programı kurgulayabilirsiniz."} 
+                />
+                <InsightCard 
+                    type={riskCount > 20 ? "alert" : "positive"} 
+                    title={riskCount > 0 ? "Risk Uyarısı" : "Güçlü Profil Özeti"} 
+                    body={riskCount > 0 ? `Sistemde ${riskCount} adet değerli müşteri "At Risk" veya "Can't Lose Them" sinyaline sahip. Geri kazanım e-posta otomasyonlarını anında aktif edin.` : "Sepetinizde veya geçmiş siparişlerde risk grubuna giren değerli müşteri saptanmadı. Müşteri tutma başarınız son derece stabil."} 
+                />
             </div>
         </div>
     );

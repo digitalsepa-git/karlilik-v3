@@ -140,6 +140,7 @@ export const generateFallbackData = () => {
             tax,
             costBreakdown: `Cogs: ${cogs}₺ | Kargo: ${shippingCost}₺ | Kom. (%2.5): ${commission}₺ | KDV: ${Math.round(tax)}₺`,
             profit: revenue - totalCosts,
+            customerId: order.customer?.id || order.customer?.email || `${order.customer?.firstName}-${order.customer?.lastName}`,
             customerObj: { name: `${order.customer?.firstName || ''} ${order.customer?.lastName?.charAt(0) || ''}.`, city: 'Online' },
             statusObj: STATUS_MAP_IKAS[statusKey] || { label: statusKey || 'İşleniyor', color: 'bg-gray-50 text-gray-700 ring-gray-600/20' }
         };
@@ -188,6 +189,7 @@ export const generateFallbackData = () => {
             tax,
             costBreakdown: `Cogs: ${cogs}₺ | Kargo: ${shippingCost}₺ | Kom. (%15): ${commission}₺ | KDV: ${Math.round(tax)}₺`,
             profit: revenue - totalCosts,
+            customerId: order.customerId || order.customerEmail || `${order.customerFirstName}-${order.customerLastName}`,
             customerObj: { name: `${order.customerFirstName || ''} ${order.customerLastName?.charAt(0) || ''}.`, city: order.shipmentAddress?.city || 'Bilinmiyor' },
             statusObj: statusInfo
         };
@@ -281,6 +283,15 @@ export function useOrders(products = []) {
                                 const imageId = variantObj.mainImageId || variantObj.images?.[0]?.imageId;
                                 const productImage = imageId ? `https://cdn.myikas.com/images/7692629f-ebc8-45a8-bf85-a2c79fd5af60/${imageId}/image_180.webp` : getFallbackProductImage(variantObj.name || '');
 
+                                let mappedLines = [];
+                                if (order.orderLineItems && Array.isArray(order.orderLineItems)) {
+                                    mappedLines = order.orderLineItems.map(i => ({
+                                        name: i.variant?.name || 'Bilinmeyen Ürün',
+                                        quantity: i.quantity || 1,
+                                        revenue: i.finalPrice || 0
+                                    }));
+                                }
+
                                 return {
                                     _uid: order.id,
                                     id: order.orderNumber,
@@ -306,8 +317,10 @@ export function useOrders(products = []) {
                                     tax,
                                     costBreakdown: `Cogs: ${cogs}₺ | Kargo: ${shippingCost}₺ | Kom. (%2.5): ${commission}₺ | KDV: ${Math.round(tax)}₺`,
                                     profit: revenue - totalCosts,
+                                    customerId: order.customer?.id || order.customer?.email || `${order.customer?.firstName}-${order.customer?.lastName}`,
                                     customerObj: { name: `${order.customer?.firstName || ''} ${order.customer?.lastName?.charAt(0) || ''}.`, city: 'Online' },
-                                    statusObj: STATUS_MAP_IKAS[statusKey] || { label: statusKey || 'İşleniyor', color: 'bg-gray-50 text-gray-700 ring-gray-600/20' }
+                                    statusObj: STATUS_MAP_IKAS[statusKey] || { label: statusKey || 'İşleniyor', color: 'bg-gray-50 text-gray-700 ring-gray-600/20' },
+                                    lineItems: mappedLines
                                 };
                             });
                         }
@@ -424,8 +437,10 @@ export function useOrders(products = []) {
                                 tax,
                                 costBreakdown: `Cogs: ${cogs}₺ | Kargo: ${shippingCost}₺ | Kom. (%15): ${commissionAmount}₺ | KDV: ${Math.round(tax)}₺`,
                                 profit: revenue - totalCosts,
+                                customerId: order.customerId || order.customerEmail || `${order.customerFirstName}-${order.customerLastName}`,
                                 customerObj: { name: `${order.customerFirstName || ''} ${order.customerLastName?.charAt(0) || ''}.`, city: order.shipmentAddress?.city || 'Bilinmiyor' },
-                                statusObj: statusInfo
+                                statusObj: statusInfo,
+                                lineItems: mappedLines
                             };
                         });
 

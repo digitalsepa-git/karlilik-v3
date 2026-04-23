@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { useData } from '../../context/DataContext';
+import { useGoogleAnalytics } from '../../hooks/useGoogleAnalytics';
 import { EmptyState, KpiCard, ChartCard, TableCard, InsightCard, C } from './SharedTicariComponents';
 import { ScatterChart, Scatter, LineChart, Line, BarChart, Bar, XAxis, YAxis, ZAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, Cell } from 'recharts';
 import { Megaphone, Target, PauseCircle } from 'lucide-react';
@@ -8,54 +9,71 @@ const fmt = (val) => new Intl.NumberFormat('tr-TR', { style: 'currency', currenc
 const pct = (val, d = 1) => `%${(val || 0).toLocaleString('tr-TR', { minimumFractionDigits: d, maximumFractionDigits: d })}`;
 
 export const CampaignRoiTab = () => {
-    // We don't have dedicated adSpend or campaigns array in our mock data from context usually.
-    // So we will synthesize Campaign records based on total revenue.
-    const { ordersData } = useData();
-    const { orders } = ordersData;
+    const { globalDateRange } = useData();
+    const ga = useGoogleAnalytics(globalDateRange.startDate, globalDateRange.endDate);
 
     const metrics = useMemo(() => {
-        if (!orders || orders.length === 0) return null;
+        if (!ga.data) return null;
         
-        let totalCiro = 0;
-        orders.forEach(o => {
-            if (o.statusObj?.label !== 'İade' && o.statusObj?.label !== 'CANCELLED') {
-                totalCiro += (o.revenue || 0);
+        const cg = ga.data.channels;
+        
+        // Assemble into a format suitable for the chart/table
+        const campaignList = [
+            { 
+               id: '1', 
+               name: 'Google Ads (Search & PMax)', 
+               platform: 'Google Ads', 
+               spend: cg.googleAds.cost, 
+               revenue: cg.googleAds.revenue, 
+               type: 'Search/Shopping',
+               cpa: cg.googleAds.cost / (Math.floor(cg.googleAds.clicks * 0.05) || 1), // Using 5% cr proxy for CPA
+               roas: cg.googleAds.roas 
+            },
+            { 
+               id: '2', 
+               name: 'Meta Ads (Advantage+)', 
+               platform: 'Meta Ads', 
+               spend: cg.metaAds.cost, 
+               revenue: cg.metaAds.revenue, 
+               type: 'Automated/Social',
+               cpa: cg.metaAds.cost / (Math.floor(cg.metaAds.clicks * 0.03) || 1),
+               roas: cg.metaAds.roas
+            },
+            { 
+               id: '3', 
+               name: 'Diğer (Organik / TikTok vs.)', 
+               platform: 'Mix', 
+               spend: cg.other.cost, 
+               revenue: cg.other.revenue, 
+               type: 'Mix',
+               cpa: cg.other.cost / (Math.floor(cg.other.clicks * 0.02) || 1),
+               roas: cg.other.roas
             }
-        });
+        ].filter(c => c.spend > 0).sort((a,b) => b.roas - a.roas);
 
-        // Generate synthetic ad campaigns driven by the actual ciro
-        const budgetPool = totalCiro * 0.15; // Assume 15% of ciro was ad spend
-        
-        const campaignsData = [
-            { id: '1', name: 'Kış İndirimi Search', platform: 'Google Ads', spend: budgetPool * 0.40, revenue: totalCiro * 0.45, type: 'Search' },
-            { id: '2', name: 'Advantage+ Shopping', platform: 'Meta Ads', spend: budgetPool * 0.35, revenue: totalCiro * 0.25, type: 'Automated' },
-            { id: '3', name: 'Trendyol CPC Genel', platform: 'Trendyol', spend: budgetPool * 0.15, revenue: totalCiro * 0.18, type: 'Marketplace' },
-            { id: '4', name: 'TikTok UGC Video', platform: 'TikTok', spend: budgetPool * 0.10, revenue: totalCiro * 0.05, type: 'Video' },
-        ];
+        return { 
+            campaignList, 
+            tSpend: ga.data.totalAdCost, 
+            tAttrCiro: ga.data.totalRevenue,
+            overallRoas: ga.data.overallRoas,
+            cpa: ga.data.cpa 
+        };
+    }, [ga.data]);
 
-        let tSpend = 0;
-        let tAttrCiro = 0;
+    if (ga.loading) return (
+      <div className="p-8 flex flex-col items-center justify-center animate-pulse min-h-[400px]">
+          <Megaphone className="text-[#B4B4C8] mb-4" size={32} />
+          <div className="text-[#0F1223] font-bold text-sm">Gerçek Reklam Verileri Bekleniyor</div>
+          <div className="text-[#7D7DA6] text-[11px] mt-1">Google Analytics ve Ads API entegrasyonundan güncel harcamalar getiriliyor...</div>
+      </div>
+    );
+    
+    if (!metrics || metrics.campaignList.length === 0) return <EmptyState title="Reklam Verisi Bulunamadı" message="Bu tarih aralığında Google/Meta harcama logu saptanmadı." />;
 
-        const campaignList = campaignsData.map(c => {
-            tSpend += c.spend;
-            tAttrCiro += c.revenue;
-            return {
-                ...c,
-                roas: c.spend > 0 ? (c.revenue / c.spend) : 0,
-                cpa: c.spend / (Math.floor(c.revenue / 200) || 1) // Mock conversions
-            };
-        }).sort((a,b) => b.roas - a.roas);
-
-        return { campaignList, tSpend, tAttrCiro };
-    }, [orders]);
-
-    if (!metrics) return <EmptyState title="Veri Bulunamadı" />;
-
-    const { campaignList, tSpend, tAttrCiro } = metrics;
-    const avgRoas = tSpend > 0 ? (tAttrCiro / tSpend) : 0;
+    const { campaignList, tSpend, overallRoas, cpa } = metrics;
 
     const barData = campaignList.map(c => ({
-        name: c.name.substring(0,10),
+        name: c.name.split(' ')[0], // Extract "Google" or "Meta" or "Diğer"
         Harcama: c.spend,
         Ciro: c.revenue,
         roasVal: Number(c.roas.toFixed(2))
@@ -66,10 +84,34 @@ export const CampaignRoiTab = () => {
             
             {/* KPIs */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <KpiCard title="Toplam Reklam Harcaması" value={fmt(tSpend)} delta="Dönem İçi" tone="neutral" />
-                <KpiCard title="Genel Hesap ROAS'ı" value={`${avgRoas.toFixed(2)}x`} delta="Ortalama" tone={avgRoas > 3 ? "positive" : "warning"} />
-                <KpiCard title="Ortalama Müşteri Edinim (CAC)" value={fmt(tSpend / (orders.length*0.2 || 1))} delta="Hesaplanan" tone="neutral" />
-                <KpiCard title="En Karlı Kampanya" value={campaignList[0]?.name || '—'} delta={`ROAS: ${campaignList[0]?.roas.toFixed(2)}x`} tone="positive" />
+                <KpiCard 
+                    title="Toplam Reklam Harcaması" 
+                    value={fmt(tSpend)} 
+                    delta="Dönem İçi" 
+                    tone="neutral" 
+                    tooltip="Seçili tarih aralığında API'ye bağlı tüm kanallarınızda ölçülen toplam (brüt) pazarlama harcaması." 
+                />
+                <KpiCard 
+                    title="Genel Hesap ROAS'ı" 
+                    value={`${overallRoas.toFixed(2)}x`} 
+                    delta="Ortalama" 
+                    tone={overallRoas > 3 ? "positive" : "warning"} 
+                    tooltip="Bağlı platformlardan (Google, Meta vb.) izlenen reklam gelirlerinin toplam harcamaya bölünmesiyle oluşan ağırlıklı ROAS (Return On Ad Spend) katsayısı." 
+                />
+                <KpiCard 
+                    title="Ortalama Müşteri Edinim (CAC)" 
+                    value={fmt(cpa)} 
+                    delta="Gerçekleşen" 
+                    tone="neutral" 
+                    tooltip="Platformlardan çekilen ortalama tıklama/dönüşüm proxy hesaplamalarına göre; sipariş veya etkinlik başına düşen müşteri edinim maliyeti (CAC / CPA)." 
+                />
+                <KpiCard 
+                    title="En Karlı Kanal" 
+                    value={campaignList[0]?.platform || '—'} 
+                    delta={`ROAS: ${campaignList[0]?.roas.toFixed(2)}x`} 
+                    tone="positive" 
+                    tooltip="Aktif reklamlara sahip kanallarınız arasında harcamaya oranla en verimli geliri (En yüksek ROAS oranını) tutturmayı başarmış pazarlama kanalı." 
+                />
             </div>
 
             {/* CHARTS */}
@@ -133,19 +175,18 @@ export const CampaignRoiTab = () => {
                 }))}
             />
 
-            {/* Simülatör (Soft) */}
-            <div className="bg-[#0F1223] text-white p-6 rounded-xl flex items-center justify-between">
-                <div>
-                    <h3 className="text-sm font-bold flex items-center gap-2 mb-1"><Target size={16} className="text-yellow-400" /> Bütçe Optimizasyon Simülatörü</h3>
-                    <p className="text-xs text-gray-400">Meta Ads'ten çektiğiniz ₺ 10.000 bütçeyi Google Ads'e kaydırırsanız tahmini +₺ 14.500 ek ciro alırsınız.</p>
-                </div>
-                <button className="px-4 py-2 rounded-lg bg-white text-[#0F1223] text-[13px] font-bold hover:bg-gray-100 transition-colors">Dağılımı Uygula</button>
-            </div>
-            
             {/* INSIGHTS */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <InsightCard type="alert" title="Meta Karşılaştırması" body="Advantage+ kampanyanızın ROAS'ı 1.2x seviyesine geriledi. Google Search 4x ile çalışırken bütçeyi Meta'da tutmak marja zarar veriyor." />
-                <InsightCard type="suggestion" title="TikTok Video Fırsatı" body="Küçük test edilen TikTok UGC reklamınız CPA bakımından en ucuz kaynak. Çarpanı artırarak ölçekleme testine geçilebilir." />
+                <InsightCard 
+                   type={overallRoas < 3 ? "alert" : "trend"} 
+                   title="Kanal Dağılım Gözlemi" 
+                   body={`Seçilen periyotta ${campaignList[0]?.name} kanalı ${campaignList[0]?.roas.toFixed(2)}x ROAS ile en verimli kanalınız. ${campaignList[campaignList.length-1]?.name}'da ise bütçe harcanmasına rağmen verimlilik düşüktür.`} 
+                />
+                <InsightCard 
+                   type="suggestion" 
+                   title="Harcama Ölçekleme Fırsatı" 
+                   body={`Genel CPA oranınız (${fmt(cpa)}) hedeflerin içerisindeyse, bütçe optimizasyon simülatörünü çalıştırıp "Google Ads" PMax kampanyalarına bütçe aktarmayı test edebilirsiniz.`} 
+                />
             </div>
         </div>
     );
