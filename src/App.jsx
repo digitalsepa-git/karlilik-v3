@@ -21,6 +21,7 @@ import {
   HelpCenter,
   LandingPage
 } from './pages';
+import { WhatIfSimulationTab } from './pages/strategic_tabs/WhatIfSimulationTab';
 
 function App() {
   // Re-enable state
@@ -158,6 +159,7 @@ function App() {
       case 'product-management': return <ProductManagement t={t} />;
       case 'inventory': return <InventoryHealth t={t} />;
       case 'competition': return <CompetitionAnalysis t={t} />;
+      case 'whatif': return <WhatIfSimulationTab />;
       case 'simulator': return <PriceSimulator
         t={t}
         onNavigate={(page) => handleNavigation(page)}

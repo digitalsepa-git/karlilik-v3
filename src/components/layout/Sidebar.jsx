@@ -19,9 +19,7 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, t }) {
         { id: 'products', label: t.products, icon: Package },
         { id: 'inventory', label: t.inventory, icon: TrendingDown },
         { id: 'competition', label: t.competitors, icon: Swords },
-        // TODO: Simülatör sayfaları MVP sonrası tekrar aktif edilecek.
-        // { id: 'simulator', label: t.simulator, icon: Calculator },
-        // { id: 'company-simulator', label: 'Şirket Simülatörü', icon: Building2 },
+        { id: 'whatif', label: 'What-If Simülasyon', icon: Calculator },
         { id: 'reports', label: t.reports, icon: BarChart3 },
         { id: 'expenses', label: t.expenses, icon: Wallet },
     ];

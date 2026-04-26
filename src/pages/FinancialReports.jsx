@@ -28,10 +28,6 @@ import { StockSpeedTab } from './operation_tabs/StockSpeedTab';
 import { ShippingLogisticsTab } from './operation_tabs/ShippingLogisticsTab';
 import { ReturnsSatisfactionTab } from './operation_tabs/ReturnsSatisfactionTab';
 
-import { CompetitorDepthTab } from './strategic_tabs/CompetitorDepthTab';
-import { MarketTrendTab } from './strategic_tabs/MarketTrendTab';
-import { OpportunityMapTab } from './strategic_tabs/OpportunityMapTab';
-import { WhatIfSimulationTab } from './strategic_tabs/WhatIfSimulationTab';
 
 import { BuilderTab } from './builder_tab/BuilderTab';
 
@@ -52,7 +48,7 @@ const TOP_TABS = [
   { id: 'commercial', label: 'Ticari', icon: ShoppingCart },
   { id: 'customer', label: 'Müşteri & Pazarlama', icon: Users },
   { id: 'operation', label: 'Operasyon', icon: Truck },
-  { id: 'strategic', label: 'Stratejik', icon: Compass },
+
   { id: 'builder', label: 'Builder', icon: Wand2 },
 ];
 
@@ -78,12 +74,7 @@ const SUB_TABS = {
     { id: 'shipping', label: 'Kargo & Lojistik' },
     { id: 'returns', label: 'İade & Memnuniyet' },
   ],
-  strategic: [
-    { id: 'competition', label: 'Rekabet Derinlik' },
-    { id: 'market', label: 'Pazar Trendi' },
-    { id: 'opportunity', label: 'Fırsat Haritası' },
-    { id: 'whatif', label: 'What-If Simülasyon' },
-  ],
+
 };
 
 // OLD MOCK ARRAYS REMOVED FOR NEW HOME VIEW
@@ -866,12 +857,7 @@ export const FinancialReports = () => {
         if (activeSubTab === 'returns') return <ReturnsSatisfactionTab />;
     }
 
-    if (activeTopTab === 'strategic') {
-        if (activeSubTab === 'competition') return <CompetitorDepthTab />;
-        if (activeSubTab === 'trend') return <MarketTrendTab />;
-        if (activeSubTab === 'opportunity') return <OpportunityMapTab />;
-        if (activeSubTab === 'whatif') return <WhatIfSimulationTab />;
-    }
+
 
     return <PlaceholderView topTabId={activeTopTab} subTabId={activeSubTab} />;
   };
