@@ -188,7 +188,7 @@ export const ChannelPerformanceTab = () => {
                     tooltip="Yukarı ve sağa konumlanan yuvarlaklar en değerli kanallarınızı temsil eder. Yuvarlak büyüklükleri kanalların ürettiği toplam ciro hacmini betimler."
                     chart={
                         <div className="h-[340px]">
-                            <ResponsiveContainer width={100} height="100%" width="100%">
+                            <ResponsiveContainer width="100%" height="100%">
                                 <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
                                     <CartesianGrid strokeDasharray="3 3" opacity={0.2} vertical={false}/>
                                     <XAxis type="number" dataKey="orders" name="Sipariş Hacmi" unit=" adet" tick={{ fontSize: 10, fill: '#7D7DA6' }} axisLine={false} tickLine={false} />
@@ -216,7 +216,7 @@ export const ChannelPerformanceTab = () => {
                     tooltip="Geçmişten günümüze Ciro hacminizin hangi kanallar üzerinden yükseldiğini veya baskın hale geldiğini zaman serisi ile inceler."
                     chart={
                         <div className="h-[340px]">
-                            <ResponsiveContainer width={100} height="100%" width="100%">
+                            <ResponsiveContainer width="100%" height="100%">
                                 <AreaChart data={areaData} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
                                     <CartesianGrid strokeDasharray="3 3" opacity={0.2} vertical={false}/>
                                     <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#7D7DA6' }} minTickGap={30} axisLine={false} tickLine={false} />
