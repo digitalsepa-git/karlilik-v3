@@ -665,13 +665,6 @@ const TopTabBar = ({ activeTopTab, onChange, timePeriod, setTimePeriod }) => (
           );
         })}
     </div>
-    {/* Global Time Toggle is visible everywhere, or specifically tailored per user request */}
-    <div className="flex items-center gap-3 py-2 shrink-0 border-l border-[#EDEDF0] pl-4 ml-2">
-      <TimeToggle value={timePeriod} onChange={setTimePeriod} />
-      <button className="w-8 h-8 rounded-lg bg-[#ECE9FF] text-[#514BEE] flex items-center justify-center hover:bg-[#E0DDFF] transition-colors" title="AI Asistan">
-        <Sparkles size={16} />
-      </button>
-    </div>
   </div>
 );
 
