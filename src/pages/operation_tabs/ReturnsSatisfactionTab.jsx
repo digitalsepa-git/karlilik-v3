@@ -1,10 +1,18 @@
 import React, { useMemo } from 'react';
 import { useData } from '../../context/DataContext';
-import { EmptyState, KpiCard, ChartCard, TableCard, InsightCard, C, AlertStrip, AksiyonMerkezi } from './SharedOperationComponents';
-import { PieChart, Pie, Cell, LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
-import { Star, Smile, Frown, Meh, ArrowRight } from 'lucide-react';
+import { EmptyState, KpiCard, ChartCard, TableCard, C } from './SharedOperationComponents';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 
+const fmt = (val) => new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(val || 0);
 const pct = (val, d = 1) => `%${(val || 0).toLocaleString('tr-TR', { minimumFractionDigits: d, maximumFractionDigits: d })}`;
+
+const CHANNEL_HEX_COLORS = {
+    'Trendyol': '#F97316',
+    'Hepsiburada': '#F59E0B',
+    'Amazon': '#CA8A04',
+    'ikas': '#4F46E5',
+    'Web': '#4F46E5'
+};
 
 export const ReturnsSatisfactionTab = () => {
     const { ordersData } = useData();
@@ -15,81 +23,89 @@ export const ReturnsSatisfactionTab = () => {
 
         let totalOrders = 0;
         let returnsCount = 0;
-        const reasonsCount = {
-            'Beden Uymadı': 0, 'Kusurlu/Hasarlı': 0, 'Beklenti Altı': 0, 
-            'Yanlış Ürün': 0, 'Gecikmeli Teslim': 0, 'Vazgeçtim': 0
-        };
+        let lostRevenue = 0;
 
-        const generateMockReturnReason = (o) => {
-            const keys = Object.keys(reasonsCount);
-            // Determenistic mock reason based on length
-            if (o.category?.includes('Kozmetik')) return 'Beklenti Altı';
-            if (o.category?.includes('Setler')) return 'Vazgeçtim';
-            return keys[o.id.length % keys.length]; 
-        };
+        const channelData = {};
+        const skuDataMap = {};
 
         orders.forEach(o => {
-            if (o.statusObj?.label === 'CANCELLED') return; // Cancel is not return
             totalOrders++;
-            if (o.statusObj?.label === 'İade') {
+            
+            // Normalize status strings
+            const st = o.statusObj?.label?.toUpperCase() || '';
+            const isReturnOrCancel = st.includes('İADE') || st.includes('İPTAL') || st.includes('CANCEL') || st.includes('RETURN');
+
+            if (isReturnOrCancel) {
                 returnsCount++;
-                const reason = generateMockReturnReason(o);
-                reasonsCount[reason]++;
+                lostRevenue += (o.revenue || 0);
+
+                // Aggregate by channel
+                if (!channelData[o.channel]) {
+                    channelData[o.channel] = { count: 0, lostRevenue: 0, color: CHANNEL_HEX_COLORS[o.channel] || '#514BEE' };
+                }
+                channelData[o.channel].count++;
+                channelData[o.channel].lostRevenue += (o.revenue || 0);
+
+                // Aggregate by SKU (assuming primary SKU)
+                const sku = o.sku || 'Bilinmiyor';
+                if (!skuDataMap[sku]) {
+                    skuDataMap[sku] = { 
+                        sku: sku, 
+                        name: o.productName, 
+                        image: o.productImage, 
+                        category: o.category,
+                        returnCount: 0, 
+                        lostRevenue: 0 
+                    };
+                }
+                skuDataMap[sku].returnCount++;
+                skuDataMap[sku].lostRevenue += (o.revenue || 0);
             }
         });
 
         const returnRate = totalOrders > 0 ? (returnsCount / totalOrders) * 100 : 0;
+        const avgReturnAmount = returnsCount > 0 ? lostRevenue / returnsCount : 0;
 
-        // Pie Data
-        const pieData = Object.keys(reasonsCount)
-            .map(k => ({ name: k, value: reasonsCount[k] }))
-            .filter(d => d.value > 0)
-            .sort((a,b) => b.value - a.value);
+        // Pie Data (Channel Distribution)
+        const pieData = Object.keys(channelData).map(k => ({
+            name: k,
+            value: channelData[k].count, // Use count for pie portions
+            lostRevenue: channelData[k].lostRevenue,
+            color: channelData[k].color
+        })).sort((a,b) => b.value - a.value);
 
-        const COLORS = ['#EF4444', '#F59E0B', '#3B82F6', '#8B5CF6', '#10B981', '#7D7DA6'];
-        
-        // Mock Rating Distribution
-        const ratingDist = [
-            { star: '5 Yıldız', count: Math.floor(totalOrders * 0.45) },
-            { star: '4 Yıldız', count: Math.floor(totalOrders * 0.25) },
-            { star: '3 Yıldız', count: Math.floor(totalOrders * 0.15) },
-            { star: '2 Yıldız', count: Math.floor(totalOrders * 0.08) },
-            { star: '1 Yıldız', count: Math.floor(totalOrders * 0.07) }
-        ];
+        // Table Data (Top Returned SKUs)
+        const tableData = Object.values(skuDataMap)
+            .sort((a, b) => b.returnCount - a.returnCount) // Sort by return count descending
+            .slice(0, 50); // Top 50 returned items
 
-        let totalRatingPoints = 0, ratedCount = 0;
-        ratingDist.forEach((d, i) => {
-            totalRatingPoints += d.count * (5 - i);
-            ratedCount += d.count;
-        });
-        const avgRating = ratedCount > 0 ? (totalRatingPoints / ratedCount) : 0;
-
-        // Action Rules
-        const actions = [];
-        if (returnRate > 10) {
-            actions.push({ priority: 'acil', title: `Yüksek İade Oranı: ${pct(returnRate)}`, desc: 'Genel iade oranınız sektör benchmarkının (%5) oldukça üzerinde seyrediyor. Özellikle Beden/Kusur analizi yapılmalı.', cta: 'Kök Neden İncele' });
-        }
-        if (Object.keys(reasonsCount).find(k => reasonsCount[k] > returnsCount * 0.4)) {
-            const worstReason = Object.keys(reasonsCount).reduce((a, b) => reasonsCount[a] > reasonsCount[b] ? a : b);
-            actions.push({ priority: 'önemli', title: `Baskın İade Sebebi: ${worstReason}`, desc: `İadelerin %${((reasonsCount[worstReason] / returnsCount)*100).toFixed(0)} kısmı aynı sebepten ( ${worstReason} ) kaynaklanıyor. Açıklama veya Kalite Kontrol hatası olabilir.`, cta: 'Ürünleri Filtrele' });
-        }
-
-        const mockAlerts = actions.filter(a => a.priority === 'acil').map(a => ({ message: a.title })).slice(0, 3);
-
-        return { totalOrders, returnsCount, returnRate, avgRating, pieData, COLORS, ratingDist, actions, mockAlerts };
+        return { totalOrders, returnsCount, lostRevenue, returnRate, avgReturnAmount, pieData, tableData };
     }, [orders]);
 
-    if (!metrics) return <EmptyState title="İade Verisi Yok" />;
+    if (!metrics) return <EmptyState title="Veri Yok" message="İptal veya iade analizi yapılabilecek sipariş bulunamadı." />;
 
-    const { totalOrders, returnsCount, returnRate, avgRating, pieData, COLORS, ratingDist, actions, mockAlerts } = metrics;
+    const { totalOrders, returnsCount, lostRevenue, returnRate, avgReturnAmount, pieData, tableData } = metrics;
 
-    const CustomTooltip = ({ active, payload }) => {
+    if (returnsCount === 0) {
+        return (
+            <div className="p-8 h-[60vh] flex flex-col items-center justify-center animate-in fade-in max-w-[1440px] mx-auto w-full">
+                <div className="w-16 h-16 bg-green-50 rounded-full flex items-center justify-center mb-4">
+                    <span className="text-3xl">🎉</span>
+                </div>
+                <h3 className="text-xl font-bold text-[#0F1223] mb-2">Harika Haber!</h3>
+                <p className="text-[#7D7DA6] text-center max-w-md">Seçili dönemde hiçbir siparişiniz iptal veya iade edilmemiş. Müşteri memnuniyetiniz ve ürün kaliteniz zirvede.</p>
+            </div>
+        );
+    }
+
+    const CustomTooltipPie = ({ active, payload }) => {
         if (active && payload && payload.length) {
+            const data = payload[0].payload;
             return (
                 <div className="bg-white p-3 border border-[#EDEDF0] shadow-lg rounded-xl text-xs">
-                    <p className="font-bold mb-1">{payload[0].name}</p>
-                    <p>Adet: <span className="font-bold">{payload[0].value}</span></p>
-                    <p>Payı: <span className="font-bold">{pct((payload[0].value/returnsCount)*100)}</span></p>
+                    <p className="font-bold mb-1" style={{color: data.color}}>{data.name}</p>
+                    <p>İptal/İade Sayısı: <span className="font-bold">{data.value} Adet</span></p>
+                    <p>Kaybedilen Ciro: <span className="font-bold text-[#EF4444]">{fmt(data.lostRevenue)}</span></p>
                 </div>
             );
         }
@@ -99,105 +115,60 @@ export const ReturnsSatisfactionTab = () => {
     return (
         <div className="p-8 space-y-6 animate-in fade-in duration-300 max-w-[1440px] mx-auto w-full">
             
-            <AlertStrip alerts={mockAlerts} />
-
             {/* KPIs */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <KpiCard title="Toplam İade Oranı" value={pct(returnRate)} delta="Sipariş vs İade" tone={returnRate > 5 ? "negative" : "positive"} />
-                <KpiCard title="Ortalama Müşteri Puanı" value={`★ ${avgRating.toFixed(1)}`} delta="Hedef ≥ 4.5" tone={avgRating >= 4.5 ? "positive" : "warning"} />
-                <KpiCard title="Toplam İade İşlemi" value={returnsCount} delta="Son 30 gün" tone="neutral" />
-                <KpiCard title="Çözüm Bekleyen İadeler" value="8 Adet" delta=">72 saat olan: 2" tone="warning" />
+                <KpiCard title="Toplam İptal/İade Oranı" value={pct(returnRate)} delta={`${returnsCount} / ${totalOrders} Sipariş`} tone={returnRate > 5 ? "negative" : "positive"} />
+                <KpiCard title="Toplam İptal/İade Adedi" value={returnsCount} delta="İptal edilen net sipariş" tone="warning" />
+                <KpiCard title="Kaybedilen Ciro (Brüt)" value={fmt(lostRevenue)} delta="İadelerden dolayı oluşan ciro kaybı" tone="negative" />
+                <KpiCard title="Ortalama İade Tutarı" value={fmt(avgReturnAmount)} delta="İade başına kaybedilen" tone="neutral" />
             </div>
 
             {/* CHARTS */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[400px]">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:h-[400px]">
                 <ChartCard 
-                    title="İade Sebepleri Dağılımı (Dinamik Etiketler)"
+                    title="Kanal Bazlı İptal/İade Dağılımı"
+                    className="lg:col-span-1"
                     chart={
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveContainer width="100%" height={300}>
                             <PieChart>
-                                <Pie data={pieData} cx="50%" cy="50%" innerRadius={70} outerRadius={110} paddingAngle={2} dataKey="value" label={({name, percent}) => `${name} (${(percent * 100).toFixed(0)}%)`}>
-                                    {pieData.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                                <Pie data={pieData} cx="50%" cy="50%" innerRadius={70} outerRadius={110} paddingAngle={2} dataKey="value">
+                                    {pieData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
                                 </Pie>
-                                <Tooltip content={<CustomTooltip/>} />
-                                <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" className="text-2xl font-bold fill-[#EF4444]">{returnsCount}</text>
-                                <text x="50%" y="58%" textAnchor="middle" dominantBaseline="middle" className="text-xs font-bold fill-[#7D7DA6]">İade</text>
+                                <Tooltip content={<CustomTooltipPie />} />
+                                <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" className="text-3xl font-bold fill-[#EF4444]">{returnsCount}</text>
+                                <text x="50%" y="58%" textAnchor="middle" dominantBaseline="middle" className="text-xs font-bold fill-[#7D7DA6]">İptal/İade</text>
                             </PieChart>
                         </ResponsiveContainer>
                     }
                 />
-                <ChartCard 
-                    title="Müşteri Rating Dağılımı"
-                    chart={
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={ratingDist} layout="vertical" margin={{ top: 20, right: 30, left: 40, bottom: 0 }}>
-                                <CartesianGrid strokeDasharray="3 3" opacity={0.2} horizontal={true} vertical={false} />
-                                <XAxis type="number" hide />
-                                <YAxis dataKey="star" type="category" tick={{ fontSize: 11, fill: '#0F1223', fontWeight: 600 }} axisLine={false} tickLine={false} />
-                                <Tooltip formatter={(val) => [`${val} Yorum`, 'Adet']} cursor={{fill: '#FAFAFB'}} />
-                                <Bar dataKey="count" radius={[0, 4, 4, 0]} barSize={24}>
-                                    {ratingDist.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={index < 2 ? '#10B981' : index === 2 ? '#F59E0B' : '#EF4444'} />
-                                    ))}
-                                </Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
-                    }
-                />
-            </div>
-
-            {/* SENTIMENT BÖLÜMÜ */}
-            <div className="bg-white border rounded-xl overflow-hidden flex flex-col md:flex-row">
-                <div className="p-6 md:w-1/3 bg-[#FAFAFB] border-r border-[#EDEDF0] flex flex-col justify-center">
-                    <h3 className="font-bold text-[#0F1223] mb-2 text-lg">Sentiment Analizi</h3>
-                    <p className="text-sm text-[#7D7DA6] leading-relaxed mb-6">Müşterilerinizin bıraktığı organik yorumlardan AI destekli çıkarılan genel duygu durumu.</p>
-                    <div className="space-y-4">
-                        <div className="flex items-center gap-4">
-                            <Smile size={28} className="text-emerald-500" />
-                            <div className="flex-1">
-                                <div className="flex justify-between text-xs font-bold mb-1"><span className="text-emerald-700">Pozitif</span><span>%64</span></div>
-                                <div className="h-2 rounded-full border overflow-hidden"><div className="h-full bg-emerald-500 w-[64%]"></div></div>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-4">
-                            <Meh size={28} className="text-amber-500" />
-                            <div className="flex-1">
-                                <div className="flex justify-between text-xs font-bold mb-1"><span className="text-amber-700">Nötr</span><span>%22</span></div>
-                                <div className="h-2 rounded-full border overflow-hidden"><div className="h-full bg-amber-500 w-[22%]"></div></div>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-4">
-                            <Frown size={28} className="text-red-500" />
-                            <div className="flex-1">
-                                <div className="flex justify-between text-xs font-bold mb-1"><span className="text-red-700">Negatif</span><span>%14</span></div>
-                                <div className="h-2 rounded-full border overflow-hidden"><div className="h-full bg-red-500 w-[14%]"></div></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div className="p-6 md:w-2/3 flex flex-col justify-center">
-                    <div className="grid grid-cols-2 gap-8">
-                        <div>
-                            <h4 className="font-bold text-[#0F1223] mb-4 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-red-500"></span> En Sık Negatif Kelimeler</h4>
-                            <div className="flex flex-wrap gap-2">
-                                {['Beden uymadı', 'Geç kargo', 'Kırık geldi', 'Kötü paketleme', 'Beklediğim gibi değil'].map(w => (
-                                    <span key={w} className="px-3 py-1.5 bg-red-50 text-red-700 text-xs font-medium rounded-lg border border-red-100">{w}</span>
-                                ))}
-                            </div>
-                        </div>
-                        <div>
-                            <h4 className="font-bold text-[#0F1223] mb-4 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-emerald-500"></span> En Sık Pozitif Kelimeler</h4>
-                            <div className="flex flex-wrap gap-2">
-                                {['Çok hızlı', 'Harika kalite', 'Beklediğimden iyi', 'Teşekkürler', 'Sağlam paket', 'Yanında hediye'].map(w => (
-                                    <span key={w} className="px-3 py-1.5 bg-emerald-50 text-emerald-700 text-xs font-medium rounded-lg border border-emerald-100">{w}</span>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
+                
+                <div className="lg:col-span-2 flex flex-col h-full overflow-hidden">
+                    <TableCard
+                        title="En Çok İptal/İade Edilen Ürünler (SKU)"
+                        pageSize={5}
+                        columns={[
+                            { key: 'urun', label: 'Ürün', align: 'left' },
+                            { key: 'sku', label: 'SKU / Model', align: 'left' },
+                            { key: 'kategori', label: 'Kategori', align: 'left' },
+                            { key: 'adet', label: 'İade Adedi', align: 'right' },
+                            { key: 'ciro', label: 'Kayıp Ciro', align: 'right' }
+                        ]}
+                        rows={tableData.map((r, i) => ({
+                            urun: (
+                                <div className="flex items-center gap-3">
+                                    <span className="text-xs text-[#7D7DA6] font-bold w-4">{i + 1}.</span>
+                                    <img src={r.image} alt="" className="w-10 h-10 rounded-lg object-cover bg-gray-50 border border-gray-100" />
+                                    <span className="font-medium text-[#0F1223] truncate max-w-[200px]" title={r.name}>{r.name}</span>
+                                </div>
+                            ),
+                            sku: <span className="font-mono text-xs text-[#514BEE] bg-[#514BEE]/5 px-2 py-1 rounded">{r.sku}</span>,
+                            kategori: <span className="text-sm text-[#7D7DA6]">{r.category}</span>,
+                            adet: <span className="font-bold text-[#EF4444]">{r.returnCount}</span>,
+                            ciro: <span className="font-medium text-[#0F1223]">{fmt(r.lostRevenue)}</span>
+                        }))}
+                    />
                 </div>
             </div>
-
-            <AksiyonMerkezi actions={actions} />
 
         </div>
     );

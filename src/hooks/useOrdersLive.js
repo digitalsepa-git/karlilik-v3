@@ -88,115 +88,8 @@ export const getFallbackProductImage = (productName) => {
 };
 
 export const generateFallbackData = () => {
-    let finalData = [];
-    const now = new Date();
-    const getRandomRecentDate = (index) => {
-        const d = new Date(now);
-        d.setHours(d.getHours() - ((index * 13) % (30 * 24))); // securely spread over the last 30 days
-        return d;
-    };
-
-    const fbIkas = (realOrdersFallback.ikas || []).map((order, i) => {
-        const item = order.orderLineItems[0];
-        const variantObj = item?.variant || {};
-        const revenue = order.totalFinalPrice || (item ? item.finalPrice : 0);
-
-        // For mock Ikas fallback, we simulate a 10% discount for UI testing
-        const discount = revenue * 0.10;
-        const grossRevenue = revenue + discount;
-
-        const sku = variantObj.sku || `SKU-${variantObj.name ? variantObj.name.substring(0, 6) : 'DEFAULT'}`;
-        const costInfo = productCosts[sku] || productCosts["DEFAULT"];
-        const cogs = costInfo.cogs;
-        const shippingCost = costInfo.shipping;
-        const commission = Math.round(revenue * 0.025);
-        const kdvRate = 0.20;
-        const outputVat = revenue - (revenue / (1 + kdvRate));
-        const cogsVat = cogs - (cogs / (1 + kdvRate));
-        const shippingVat = shippingCost - (shippingCost / (1 + kdvRate));
-        const commissionVat = commission - (commission / (1 + kdvRate));
-        const tax = Math.max(0, outputVat - cogsVat - shippingVat - commissionVat);
-        const totalCosts = cogs + shippingCost + commission + tax;
-        const statusKey = order.orderPackageStatus === 'FULFILLED' ? 'FULFILLED' : order.orderPaymentStatus;
-
-        return {
-            _uid: `ikas-${order.id}`,
-            id: order.orderNumber,
-            productId: order.id,
-            sku: sku,
-            category: getCategoryFromProductName(variantObj.name),
-            channel: 'Web Sitesi',
-            channelType: 'web',
-            dateRaw: getRandomRecentDate(i),
-            channelIcon: Globe,
-            channelColor: CHANNEL_COLORS.ikas,
-            productName: variantObj.name || 'Bilinmeyen Ürün',
-            productImage: getFallbackProductImage(variantObj.name),
-            revenue,
-            cost: totalCosts,
-            cogs,
-            shipping: shippingCost,
-            commission,
-            tax,
-            costBreakdown: `Cogs: ${cogs}₺ | Kargo: ${shippingCost}₺ | Kom. (%2.5): ${commission}₺ | KDV: ${Math.round(tax)}₺`,
-            profit: revenue - totalCosts,
-            customerId: order.customer?.id || order.customer?.email || `${order.customer?.firstName}-${order.customer?.lastName}`,
-            customerObj: { name: `${order.customer?.firstName || ''} ${order.customer?.lastName?.charAt(0) || ''}.`, city: 'Online' },
-            statusObj: STATUS_MAP_IKAS[statusKey] || { label: statusKey || 'İşleniyor', color: 'bg-gray-50 text-gray-700 ring-gray-600/20' }
-        };
-    });
-
-    const fbTy = (realOrdersFallback.trendyol || []).map((order, i) => {
-        const revenue = order.totalPrice;
-        // Simulate a 12% discount for UI testing if none provided by fallback JSON
-        const discount = order.totalDiscount || (revenue * 0.12);
-        const grossRevenue = order.grossAmount || (revenue + discount);
-        const sku = order.lines?.[0]?.merchantSku || `SKU-${order.lines?.[0]?.productName ? order.lines[0].productName.substring(0, 6) : 'DEFAULT'}`;
-        const costInfo = productCosts[sku] || productCosts["DEFAULT"];
-        const cogs = costInfo.cogs;
-        const shippingCost = costInfo.shipping;
-        const commission = Math.round(revenue * 0.15);
-        const kdvRate = 0.20;
-        const outputVat = revenue - (revenue / (1 + kdvRate));
-        const cogsVat = cogs - (cogs / (1 + kdvRate));
-        const shippingVat = shippingCost - (shippingCost / (1 + kdvRate));
-        const commissionVat = commission - (commission / (1 + kdvRate));
-        const tax = Math.max(0, outputVat - cogsVat - shippingVat - commissionVat);
-        const totalCosts = cogs + shippingCost + commission + tax;
-        let statusInfo = { label: order.status || 'İşleniyor', color: 'bg-gray-50 text-gray-700 ring-gray-600/20' };
-        if (order.status === 'Delivered') statusInfo = { label: 'Teslim Edildi', color: 'bg-green-50 text-green-700 ring-green-600/20' };
-
-        return {
-            _uid: `ty-${order.id}`,
-            id: order.orderNumber,
-            productId: `ty-${order.id}`,
-            sku: sku,
-            category: getCategoryFromProductName(order.lines?.[0]?.productName || ''),
-            channel: 'Trendyol',
-            channelType: 'marketplace',
-            dateRaw: getRandomRecentDate(i + 50),
-            channelIcon: ShoppingBag,
-            channelColor: CHANNEL_COLORS.Trendyol,
-            productName: order.lines?.[0]?.productName || 'Satış',
-            productImage: getFallbackProductImage(order.lines?.[0]?.productName || ''),
-            revenue,
-            grossRevenue,
-            discount,
-            cost: totalCosts,
-            cogs,
-            shipping: shippingCost,
-            commission,
-            tax,
-            costBreakdown: `Cogs: ${cogs}₺ | Kargo: ${shippingCost}₺ | Kom. (%15): ${commission}₺ | KDV: ${Math.round(tax)}₺`,
-            profit: revenue - totalCosts,
-            customerId: order.customerId || order.customerEmail || `${order.customerFirstName}-${order.customerLastName}`,
-            customerObj: { name: `${order.customerFirstName || ''} ${order.customerLastName?.charAt(0) || ''}.`, city: order.shipmentAddress?.city || 'Bilinmiyor' },
-            statusObj: statusInfo
-        };
-    });
-
-    finalData = [...fbIkas, ...fbTy];
-    return finalData.sort((a, b) => b.dateRaw - a.dateRaw);
+    // Mock data generation removed to prevent UI ghost state issues
+    return [];
 };
 
 export function useOrders(products = []) {
@@ -241,9 +134,10 @@ export function useOrders(products = []) {
 
                 let ikasData = [];
                 let trendyolData = [];
+                let tyTransactions = [];
                 try {
                     if (tokenRes.ok && tokenData.access_token) {
-                        const reqBody = { query: `{ listOrder(pagination: { limit: 100 }, sort: "-orderedAt") { data { id orderNumber orderedAt orderPaymentStatus orderPackageStatus totalPrice totalFinalPrice customer { firstName lastName email } orderLineItems { quantity finalPrice variant { name mainImageId } } } } }` };
+                        const reqBody = { query: `{ listOrder(pagination: { limit: 100 }, sort: "-orderedAt") { data { id orderNumber orderedAt orderPaymentStatus orderPackageStatus totalPrice totalFinalPrice customer { firstName lastName email } orderLineItems { quantity finalPrice variant { name mainImageId } } shippingLines { price finalPrice } } } }` };
                         const res = await fetch('/ikas-api/graphql', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tokenData.access_token}` },
@@ -261,7 +155,11 @@ export function useOrders(products = []) {
                                 const sku = variantObj.sku || `SKU-${variantObj.name ? variantObj.name.substring(0, 6) : 'DEFAULT'}`;
                                 const costInfo = productCosts[sku] || productCosts["DEFAULT"];
                                 const cogs = Math.round(revenue * 0.25); // Universal 25% rule
-                                const shippingCost = costInfo.shipping;
+                                
+                                // Real shipping cost from Ikas Kargo module (if used)
+                                const shippingLines = order.shippingLines || [];
+                                const realShippingCost = shippingLines.reduce((sum, line) => sum + (line.finalPrice || line.price || 0), 0);
+                                const shippingCost = realShippingCost > 0 ? realShippingCost : costInfo.shipping;
 
                                 const commission = Math.round(revenue * 0.025);
 
@@ -368,6 +266,73 @@ export function useOrders(products = []) {
                         globalErrors.push("Ty_Empty_Array: AuthStrLen=" + authStr.length + " | Supplier=" + supplierId);
                     }
 
+                    // --- FETCH TRENDYOL SETTLEMENTS FOR CARGO DEDUCTIONS ---
+                    const tyShippingCostMap = {};
+                    
+                    try {
+                        const nowTs = new Date().getTime();
+                        const past15 = nowTs - (15 * 24 * 60 * 60 * 1000);
+                        const past30 = past15 - (15 * 24 * 60 * 60 * 1000);
+                        const past45 = past30 - (15 * 24 * 60 * 60 * 1000);
+
+                        const fetchSettlementChunk = async (s, e) => {
+                            const url = `/trendyol-api/integration/finance/che/sellers/${supplierId}/settlements?startDate=${s}&endDate=${e}`;
+                            const res = await fetch(url, { headers: { 'Authorization': `Basic ${authStr}` } });
+                            const json = await res.json();
+                            return (json && json.content) ? json.content : [];
+                        };
+
+                        const [s1, s2, s3] = await Promise.all([
+                            fetchSettlementChunk(past15, nowTs),
+                            fetchSettlementChunk(past30, past15),
+                            fetchSettlementChunk(past45, past30)
+                        ]);
+                        
+                        const rawSettlements = [...s1, ...s2, ...s3];
+                        
+                        // Declare clustering globally so both real API and fallback can use it
+                        const clusterPayoutDate = (timestamp) => {
+                            let date = new Date(timestamp);
+                            date.setDate(date.getDate() + 21); // +21 days vade
+                            let day = date.getDay();
+                            if (day === 2) date.setDate(date.getDate() + 2);
+                            else if (day === 3) date.setDate(date.getDate() + 1);
+                            else if (day === 5) date.setDate(date.getDate() + 3);
+                            else if (day === 6) date.setDate(date.getDate() + 2);
+                            else if (day === 0) date.setDate(date.getDate() + 1);
+                            return date;
+                        };
+
+                        if (rawSettlements.length > 0) {
+                            rawSettlements.forEach(s => {
+                                // Extract shipping costs for map
+                                const isCargo = s.transactionType === 'CargoFee' || s.transactionType === 'KargoKesintisi' || (s.description && s.description.toLowerCase().includes('kargo'));
+                                if (isCargo && (s.orderNumber || s.barcode)) {
+                                    const key = s.orderNumber || s.barcode;
+                                    if (!tyShippingCostMap[key]) tyShippingCostMap[key] = 0;
+                                    tyShippingCostMap[key] += Math.abs(s.netAmount || 0);
+                                }
+                            });
+
+                            tyTransactions = rawSettlements.map((s, idx) => {
+                                const typeStr = (s.transactionType === 'Sale' || s.netAmount > 0) ? 'Tahsilat' : 'Kesinti';
+                                return {
+                                    id: s.id || `ty-set-${idx}-${s.orderNumber || ''}`,
+                                    orderNumber: s.orderNumber || s.barcode || 'N/A',
+                                    type: typeStr,
+                                    desc: `${s.transactionType || 'İşlem'} - ${s.description || 'Trendyol Hakediş'}`,
+                                    amt: s.netAmount || 0,
+                                    date: s.paymentDate ? new Date(s.paymentDate) : clusterPayoutDate(s.transactionDate || nowTs),
+                                    channel: 'Trendyol',
+                                    isApi: true,
+                                    originalObj: s
+                                };
+                            });
+                        }
+                    } catch (e) {
+                        console.error("Trendyol Settlements API Error:", e);
+                    }
+
                     if (allTrendyolOrders.length > 0) {
                         trendyolData = allTrendyolOrders.map(order => {
                             // True Net Customer Revenue in Ty is totalPrice + totalTyDiscount.
@@ -398,7 +363,11 @@ export function useOrders(products = []) {
                                 : (revenue * 0.15); // Fallback
 
                             const cogs = Math.round(revenue * 0.25); // Universal 25% rule
-                            const shippingCost = costInfo.shipping * Math.max(1, totalQuantity);
+                            
+                            // Real shipping cost from Trendyol Settlements API
+                            const realShippingCost = tyShippingCostMap[order.orderNumber] || 0;
+                            // Kargo faturası henüz kesilmediyse (0 ise) varsayılan hacim/desi maliyetini tahakkuk olarak kullan
+                            const shippingCost = realShippingCost > 0 ? realShippingCost : (costInfo.shipping * Math.max(1, totalQuantity));
 
                             const reqTyKDVRate = 0.20;
                             const outputVat = revenue - (revenue / (1 + reqTyKDVRate));
@@ -452,71 +421,6 @@ export function useOrders(products = []) {
                     globalErrors.push('Ty: ' + e.message);
                 } // Silently handled without breaking Ikas
 
-                // --- FETCH TRENDYOL SETTLEMENTS (CASHFLOW) ---
-                let tyTransactions = [];
-                try {
-                    let dbTySupplierId = apiCredentials.trendyol.supplierId;
-                    let dbTyApiKey = apiCredentials.trendyol.apiKey;
-                    let dbTyApiSecret = apiCredentials.trendyol.apiSecret;
-                    const authStr = btoa(`${dbTyApiKey}:${dbTyApiSecret}`);
-
-                    const nowTs = new Date().getTime();
-                    // To find "Gelecek Ödemeler", we must fetch Sales/Settlements that happened in the PAST 
-                    // whose 'paymentDate' or 'vade' is in the future.
-                    // Max query range is 15 days. We will fetch the last 45 days.
-                    const past15 = nowTs - (15 * 24 * 60 * 60 * 1000);
-                    const past30 = past15 - (15 * 24 * 60 * 60 * 1000);
-                    const past45 = past30 - (15 * 24 * 60 * 60 * 1000);
-
-                    const fetchSettlementChunk = async (s, e) => {
-                        const url = `/trendyol-api/integration/finance/che/sellers/${dbTySupplierId}/settlements?startDate=${s}&endDate=${e}`;
-                        const res = await fetch(url, { headers: { 'Authorization': `Basic ${authStr}` } });
-                        const json = await res.json();
-                        return (json && json.content) ? json.content : [];
-                    };
-
-                    const [s1, s2, s3] = await Promise.all([
-                        fetchSettlementChunk(past15, nowTs),
-                        fetchSettlementChunk(past30, past15),
-                        fetchSettlementChunk(past45, past30)
-                    ]);
-                    
-                    const rawSettlements = [...s1, ...s2, ...s3];
-                    
-                    // Declare clustering globally so both real API and fallback can use it
-                    const clusterPayoutDate = (timestamp) => {
-                        let date = new Date(timestamp);
-                        date.setDate(date.getDate() + 21); // +21 days vade
-                        let day = date.getDay();
-                        // Cluster to Monday (1) or Thursday (4)
-                        if (day === 2) date.setDate(date.getDate() + 2); // Tue -> Thu
-                        else if (day === 3) date.setDate(date.getDate() + 1); // Wed -> Thu
-                        else if (day === 5) date.setDate(date.getDate() + 3); // Fri -> Mon
-                        else if (day === 6) date.setDate(date.getDate() + 2); // Sat -> Mon
-                        else if (day === 0) date.setDate(date.getDate() + 1); // Sun -> Mon
-                        return date;
-                    };
-
-                    if (rawSettlements.length > 0) {
-                        tyTransactions = rawSettlements.map((s, idx) => {
-                            const typeStr = (s.transactionType === 'Sale' || s.netAmount > 0) ? 'Tahsilat' : 'Kesinti';
-                            return {
-                                id: s.id || `ty-set-${idx}-${s.orderNumber || ''}`,
-                                orderNumber: s.orderNumber || s.barcode || 'N/A',
-                                type: typeStr,
-                                desc: `${s.transactionType || 'İşlem'} - ${s.description || 'Trendyol Hakediş'}`,
-                                amt: s.netAmount || 0,
-                                // If paymentDate exists use it, if missing (usual), cluster the transactionDate mathematically!
-                                date: s.paymentDate ? new Date(s.paymentDate) : clusterPayoutDate(s.transactionDate || nowTs),
-                                channel: 'Trendyol',
-                                isApi: true,
-                                originalObj: s
-                            };
-                        });
-                    }
-                } catch (e) {
-                    console.error("Trendyol Settlements API Error:", e);
-                }
 
                 if (isMounted) {
                     if (ikasData.length === 0) {

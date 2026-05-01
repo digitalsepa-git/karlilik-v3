@@ -13,6 +13,7 @@ import { TaxTab } from './financial_tabs/TaxTab';
 
 import { useOrders } from '../hooks/useOrdersLive';
 import { useActivityLog } from '../hooks/useActivityLog';
+import { useScheduledReports } from '../hooks/useScheduledReports';
 import { EmptyState } from './financial_tabs/SharedFinComponents';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, CartesianGrid, ReferenceLine, AreaChart, Area, Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from 'recharts';
 import { Settings, CheckCircle2, AlertCircle, Info as InfoIcon, Trash, Bell } from 'lucide-react';
@@ -142,25 +143,6 @@ const TimeToggle = ({ value, onChange }) => {
 
 // --- NEW COMPONENTS (Sprint 2 & 3 & 4 & 6 & 7) ---
 
-const NsmCard = ({ label, value, delta, statusStr, limitStr, statusColor }) => {
-  return (
-    <div className="bg-white rounded-xl border border-[#EDEDF0] p-4 flex flex-col relative group transition-all hover:border-[#B4B4C8] hover:shadow-md h-full">
-      <button className="absolute top-3 right-3 text-[#B4B4C8] hover:text-[#0F1223] opacity-0 group-hover:opacity-100 transition-opacity">
-        <Settings size={14} />
-      </button>
-      <span className="text-[10px] font-bold text-[#7D7DA6] uppercase tracking-wider mb-2">{label}</span>
-      <div className="text-[20px] font-bold text-[#0F1223] leading-none mb-1.5">{value}</div>
-      <div className="flex items-center justify-between mt-auto pt-2">
-         <span className={`text-[11px] font-semibold ${statusColor}`}>{delta}</span>
-      </div>
-      <div className="mt-1 flex gap-1">
-         <span className="text-[11px] text-[#7D7DA6]">{limitStr}</span>
-         {statusStr && <span className={`text-[11px] font-semibold ${statusColor}`}>· {statusStr}</span>}
-      </div>
-    </div>
-  );
-};
-
 const MorningBriefingBlock = ({ orders }) => {
   const [userName] = useState("Hakan Bey");
   
@@ -172,7 +154,6 @@ const MorningBriefingBlock = ({ orders }) => {
     previousStart.setDate(currentStart.getDate() - 30);
 
     let currRev = 0, currProfit = 0, prevRev = 0, prevProfit = 0;
-    let fulfilledOrders = 0, totalCurrentOrders = 0;
     
     (orders || []).forEach(o => {
       const orderDate = new Date(o.dateRaw);
@@ -182,10 +163,6 @@ const MorningBriefingBlock = ({ orders }) => {
       if (orderDate >= currentStart && orderDate <= now) {
         currRev += rev;
         currProfit += profit;
-        totalCurrentOrders++;
-        if (o.statusObj && o.statusObj.label !== 'İptal' && o.statusObj.label !== 'İade') {
-          fulfilledOrders++;
-        }
       } else if (orderDate >= previousStart && orderDate < currentStart) {
         prevRev += rev;
         prevProfit += profit;
@@ -195,63 +172,33 @@ const MorningBriefingBlock = ({ orders }) => {
     const currMargin = currRev > 0 ? (currProfit / currRev) * 100 : 0;
     const prevMargin = prevRev > 0 ? (prevProfit / prevRev) * 100 : 0;
     const marginDelta = currMargin - prevMargin;
-    
-    const sla = totalCurrentOrders > 0 ? (fulfilledOrders / totalCurrentOrders) * 100 : 0;
 
     return {
       rev: currRev,
       margin: currMargin,
-      marginDelta,
-      sla
+      marginDelta
     };
   }, [orders]);
   
+  const greetingObj = useMemo(() => {
+     const hour = new Date().getHours();
+     if (hour >= 6 && hour < 12) return { text: 'Günaydın', emoji: '☀️' };
+     if (hour >= 12 && hour < 17) return { text: 'Merhaba', emoji: '👋' };
+     if (hour >= 17 && hour < 22) return { text: 'İyi akşamlar', emoji: '🌇' };
+     return { text: 'İyi geceler', emoji: '🌙' };
+  }, []);
+
   const formatNum = (v) => new Intl.NumberFormat('tr-TR').format(Math.round(v));
   
   return (
-    <div className="bg-white p-6 rounded-xl border border-[#EDEDF0] shadow-sm flex flex-col xl:flex-row gap-6">
-      <div className="flex-1 max-w-sm flex flex-col pr-4 border-r border-[#EDEDF0]/0 xl:border-[#EDEDF0]">
-         <h2 className="text-[18px] font-bold text-[#0F1223] leading-snug mb-3">
-           ☀️ Günaydın {userName} — dün ciro tarafında hedefler aşıldı ancak kârlılıkta kritik uyarılar var.
+    <div className="bg-gradient-to-r from-[#FAFAFB] to-white p-6 md:p-8 rounded-xl border border-[#EDEDF0] shadow-sm flex flex-col md:flex-row items-center gap-6 justify-between">
+      <div className="flex-1 max-w-4xl flex flex-col">
+         <h2 className="text-[20px] font-bold text-[#0F1223] leading-snug mb-2">
+           {greetingObj.emoji} {greetingObj.text} {userName} — dün ciro tarafında hedefler aşıldı ancak kârlılıkta kritik uyarılar var.
          </h2>
-         <p className="text-[13px] text-[#7D7DA6] leading-relaxed mb-4">
-           Son 30 güne göre ciro <b>₺{formatNum(metrics.rev)}</b> seviyesinde. Net kâr marjınız (%{metrics.margin.toFixed(1)}) hedefinizin (%25) altında seyrediyor. Stok ve kargo SLA uyarılarını kontrol edin.
+         <p className="text-[14px] text-[#7D7DA6] leading-relaxed">
+           Son 30 güne göre ciro <b>₺{formatNum(metrics.rev)}</b> seviyesinde tamamlandı. Net kâr marjınız (%{metrics.margin.toFixed(1)}) hedefinizin (%25) altında seyrediyor. Detaylı analiz ve kargo SLA uyarılarını alt sekmelerden kontrol edebilirsiniz.
          </p>
-         <button className="mt-auto self-start px-4 py-2 bg-[#FAFAFB] text-[#0F1223] text-xs font-semibold rounded-lg hover:bg-slate-100 transition-colors border border-[#EDEDF0]">
-           Gilan Raporunu Dinle
-         </button>
-      </div>
-
-      <div className="flex-[2] grid grid-cols-2 lg:grid-cols-4 gap-4">
-         <NsmCard 
-            label="Net Kâr Marjı" 
-            value={`%${metrics.margin.toFixed(1)}`} 
-            delta={`${metrics.marginDelta >= 0 ? '↑' : '↓'} ${metrics.marginDelta > 0 ? '+' : ''}${metrics.marginDelta.toFixed(1)} MoM`} 
-            statusColor={metrics.marginDelta >= 0 ? "text-emerald-500" : "text-rose-500"} 
-            limitStr="Hedef 25%" 
-            statusStr={metrics.margin < 25 ? `${(25 - metrics.margin).toFixed(1)} Puan Altında` : "Hedefin Üzerinde"}
-         />
-         <NsmCard 
-            label="Nakit Runway" 
-            value="45 Gün" 
-            delta="⚠ Alarm" 
-            statusColor="text-rose-500" 
-            limitStr="Min. Gereken 90g" 
-         />
-         <NsmCard 
-            label="Dead Stock" 
-            value="₺184K" 
-            delta="↑ +₺12K" 
-            statusColor="text-amber-500" 
-            limitStr="3 SKU riskte" 
-         />
-         <NsmCard 
-            label="Kargo SLA" 
-            value={`%${metrics.sla.toFixed(0)}`} 
-            delta={metrics.sla < 95 ? "↓ Riskli" : "↑ İyi"} 
-            statusColor={metrics.sla >= 95 ? "text-emerald-500" : "text-rose-500"} 
-            limitStr="Hedef 95%" 
-         />
       </div>
     </div>
   );
@@ -263,7 +210,7 @@ const ActionInbox = ({ inboxActions, dismissInboxAction }) => {
   const filtered = activeTab === 'tumu' ? inboxActions : inboxActions.filter(i => i.prio === activeTab);
 
   return (
-    <div className="w-full flex flex-col bg-white border border-[#EDEDF0] rounded-xl hover:border-[#B4B4C8] shadow-sm overflow-hidden h-[450px]">
+    <div className="w-full flex flex-col bg-white border border-[#EDEDF0] rounded-xl hover:border-[#B4B4C8] shadow-sm overflow-hidden h-fit max-h-[800px]">
       <div className="px-6 pt-5 pb-3 border-b border-[#EDEDF0] bg-[#FAFAFB]">
         <div className="flex justify-between items-end">
            <div>
@@ -302,17 +249,11 @@ const ActionInbox = ({ inboxActions, dismissInboxAction }) => {
            return (
              <div key={item.id} className="p-4 mx-2 my-2 bg-white rounded-xl border border-[#EDEDF0] shadow-sm hover:shadow-md hover:border-[#B4B4C8] transition-all flex flex-col md:flex-row md:items-center gap-4 group cursor-pointer relative overflow-hidden">
                 <div className={`absolute left-0 top-0 w-1 h-full bg-transparent ${item.prio === 'critical' ? 'bg-rose-500' : ''} ${item.prio === 'important' ? 'bg-amber-500' : ''} ${item.prio === 'info' ? 'bg-emerald-500' : ''}`} />
-                <div className="flex items-center gap-3 shrink-0 pl-2">
+                <div className="flex items-center gap-3 shrink-0 pl-2 w-[120px]">
                    {icon}
                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ring-1 ${ring}`}>{item.type}</span>
                 </div>
-                <p className="text-[13px] text-[#0F1223] font-medium leading-relaxed flex-1 pr-6 hover:text-[#514BEE]">{item.title}</p>
-                <div className="flex items-center gap-2 shrink-0 md:ml-auto">
-                   <button className="px-4 py-2 bg-[#514BEE] hover:bg-[#3A35B8] text-white text-[11px] font-bold rounded-lg transition-colors shadow-sm">
-                     {item.btn}
-                   </button>
-                   <button onClick={() => dismissInboxAction?.(item.id)} className="text-[11px] font-semibold text-[#7D7DA6] px-3 py-2 bg-[#FAFAFB] border border-[#EDEDF0] hover:bg-slate-100 rounded-lg">Yoksay</button>
-                </div>
+                <p className="text-[13px] text-[#0F1223] font-medium leading-relaxed flex-1 hover:text-[#514BEE]">{item.title}</p>
              </div>
            );
         })}
@@ -765,7 +706,7 @@ const SubTabChipBar = ({ items, activeId, onChange }) => {
 
 // --- VIEWS ---
 
-const SecondarySidebar = ({ isCollapsed, setCollapsed, navigateSubTab, timelineEvents = [] }) => {
+const SecondarySidebar = ({ isCollapsed, setCollapsed, navigateSubTab, timelineEvents = [], scheduledReports = [] }) => {
   if (isCollapsed) {
     return (
       <div className="w-[50px] shrink-0 border-l border-[#EDEDF0] bg-white flex flex-col items-center py-4 space-y-4">
@@ -797,8 +738,8 @@ const SecondarySidebar = ({ isCollapsed, setCollapsed, navigateSubTab, timelineE
             <div onClick={() => navigateSubTab('commercial', 'channel')} className="text-[13px] font-semibold text-[#0F1223] cursor-pointer hover:text-[#514BEE] flex flex-col">
               Kanal Performans <span className="text-[11px] text-[#7D7DA6] font-normal">Bu hafta</span>
             </div>
-            <div onClick={() => navigateSubTab('strategic', 'competition')} className="text-[13px] font-semibold text-[#0F1223] cursor-pointer hover:text-[#514BEE] flex flex-col">
-              Rekabet Derinlik <span className="text-[11px] text-[#7D7DA6] font-normal">3 gün önce</span>
+            <div onClick={() => navigateSubTab('commercial', 'product')} className="text-[13px] font-semibold text-[#0F1223] cursor-pointer hover:text-[#514BEE] flex flex-col">
+              Ürün Deep-Dive <span className="text-[11px] text-[#7D7DA6] font-normal">3 gün önce</span>
             </div>
          </div>
       </div>
@@ -809,14 +750,20 @@ const SecondarySidebar = ({ isCollapsed, setCollapsed, navigateSubTab, timelineE
             <Calendar size={16} className="text-[#7D7DA6]" /> Zamanlanmış
          </h3>
          <div className="space-y-3">
-           <div className="flex flex-col gap-0.5">
-             <div className="text-[13px] font-semibold text-[#0F1223]">P&L — Haftalık</div>
-             <div className="text-[11px] text-[#7D7DA6] flex justify-between">Pzt 09:00 <span className="text-emerald-600 font-medium truncate">3 alıcı · Aktif</span></div>
-           </div>
-           <div className="flex flex-col gap-0.5">
-             <div className="text-[13px] font-semibold text-[#0F1223]">Kanal — Aylık</div>
-             <div className="text-[11px] text-[#7D7DA6] flex justify-between">Ayın 1'i <span className="text-[#B4B4C8] font-medium truncate">Duraklatıldı</span></div>
-           </div>
+           {scheduledReports.map(report => (
+             <div key={report.id} className="flex flex-col gap-0.5 group">
+               <div className="text-[13px] font-semibold text-[#0F1223]">{report.title}</div>
+               <div className="text-[11px] text-[#7D7DA6] flex justify-between">
+                 {report.time} 
+                 <span className={`font-medium truncate ${report.status === 'Aktif' ? 'text-emerald-600' : 'text-[#B4B4C8]'}`}>
+                   {report.receivers ? `${report.receivers} · ${report.status}` : report.status}
+                 </span>
+               </div>
+             </div>
+           ))}
+           {scheduledReports.length === 0 && (
+              <div className="text-[11px] text-[#7D7DA6] text-center mt-2">Planlanmış rapor yok.</div>
+           )}
          </div>
       </div>
 
@@ -856,18 +803,16 @@ const SecondarySidebar = ({ isCollapsed, setCollapsed, navigateSubTab, timelineE
   );
 };
 
-const HomeView = ({ navigateSubTab, timePeriod }) => {
+const HomeView = ({ navigateSubTab, timePeriod, orders, isLoading, timelineEvents, inboxActions, dismissInboxAction, scheduledReports }) => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const { orders, loading: isLoading } = useOrders();
-  const { timelineEvents, inboxActions, dismissInboxAction } = useActivityLog(orders);
 
   return (
     <div className="p-6 md:p-8 animate-in fade-in duration-300 w-full h-full flex items-start">
       
-      <div className="flex flex-1 gap-6 w-full max-w-[1600px] mx-auto min-h-screen">
+      <div className="flex flex-1 gap-6 w-full max-w-[1600px] mx-auto">
         
         {/* ANA KOLON (1fr) */}
-        <div className="flex-1 flex flex-col gap-6 min-w-0 pb-12">
+        <div className="flex-1 flex flex-col gap-6 min-w-0">
            <HomeErrorBoundary>
              <div className="h-auto">
                 <ProgressiveLoader isLoading={isLoading} skeleton={<div className="w-full h-[200px] bg-white rounded-xl border border-[#EDEDF0] animate-pulse"></div>}>
@@ -876,23 +821,6 @@ const HomeView = ({ navigateSubTab, timePeriod }) => {
              </div>
            </HomeErrorBoundary>
 
-           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <HomeErrorBoundary>
-                <div className="h-[350px]">
-                  <ProgressiveLoader isLoading={isLoading} skeleton={<div className="w-full h-full bg-white rounded-xl border border-[#EDEDF0] animate-pulse"></div>}>
-                    <HealthRadarBlock orders={orders} />
-                  </ProgressiveLoader>
-                </div>
-              </HomeErrorBoundary>
-              
-              <HomeErrorBoundary>
-                <div className="md:col-span-2 h-[350px]">
-                  <ProgressiveLoader isLoading={isLoading} skeleton={<div className="w-full h-full bg-white rounded-xl border border-[#EDEDF0] animate-pulse"></div>}>
-                    <PinnedMetricChart orders={orders} />
-                  </ProgressiveLoader>
-                </div>
-              </HomeErrorBoundary>
-           </div>
 
            <HomeErrorBoundary>
              <div className="h-auto">
@@ -902,24 +830,11 @@ const HomeView = ({ navigateSubTab, timePeriod }) => {
              </div>
            </HomeErrorBoundary>
 
-           <HomeErrorBoundary>
-             <div className="h-auto">
-               <ProgressiveLoader isLoading={isLoading} skeleton={<div className="w-full h-[120px] bg-white rounded-xl border border-[#EDEDF0] animate-pulse"></div>}>
-                 <WeeklyChangesGrid orders={orders} timePeriod={timePeriod} />
-               </ProgressiveLoader>
-             </div>
-           </HomeErrorBoundary>
-
-           <HomeErrorBoundary>
-             <div className="h-auto">
-               <AskGilanBlock timePeriod={timePeriod} />
-             </div>
-           </HomeErrorBoundary>
         </div>
 
         {/* SAĞ SIDEBAR (280px or 50px) */}
         <div className="hidden lg:block shrink-0">
-           <SecondarySidebar isCollapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} navigateSubTab={navigateSubTab} timelineEvents={timelineEvents} />
+           <SecondarySidebar isCollapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} navigateSubTab={navigateSubTab} timelineEvents={timelineEvents} scheduledReports={scheduledReports} />
         </div>
 
       </div>
@@ -951,6 +866,13 @@ export const FinancialReports = () => {
   const [timePeriod, setTimePeriod] = useState('last7days');
   const [isAIDrawerOpen, setIsAIDrawerOpen] = useState(false);
 
+  // Lifted state
+  const { orders, loading: isLoading } = useOrders();
+  const { timelineEvents, inboxActions, dismissInboxAction, addTimelineEvent } = useActivityLog(orders);
+  const { scheduledReports, addScheduledReport } = useScheduledReports();
+
+  const reportContext = { addTimelineEvent, addScheduledReport, orders };
+
   const handleTopTabChange = (topTabId) => {
     setActiveTopTab(topTabId);
     if (topTabId !== 'home' && topTabId !== 'builder') {
@@ -969,15 +891,15 @@ export const FinancialReports = () => {
   };
 
   const renderContent = () => {
-    if (activeTopTab === 'home') return <HomeView navigateSubTab={navigateSubTab} timePeriod={timePeriod} />;
+    if (activeTopTab === 'home') return <HomeView navigateSubTab={navigateSubTab} timePeriod={timePeriod} orders={orders} isLoading={isLoading} timelineEvents={timelineEvents} inboxActions={inboxActions} dismissInboxAction={dismissInboxAction} scheduledReports={scheduledReports} />;
     if (activeTopTab === 'builder') return <BuilderTab />;
     
     // Category Pages
     if (activeTopTab === 'financial') {
-        if (activeSubTab === 'pnl') return <PnlTab />;
-        if (activeSubTab === 'cashflow') return <CashflowTab />;
-        if (activeSubTab === 'expenses') return <ExpensesTab />;
-        if (activeSubTab === 'tax') return <TaxTab />;
+        if (activeSubTab === 'pnl') return <PnlTab reportContext={reportContext} />;
+        if (activeSubTab === 'cashflow') return <CashflowTab reportContext={reportContext} />;
+        if (activeSubTab === 'expenses') return <ExpensesTab reportContext={reportContext} />;
+        if (activeSubTab === 'tax') return <TaxTab reportContext={reportContext} />;
     }
     
     if (activeTopTab === 'commercial') {
