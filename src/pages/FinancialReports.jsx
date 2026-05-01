@@ -12,6 +12,7 @@ import { ExpensesTab } from './financial_tabs/ExpensesTab';
 import { TaxTab } from './financial_tabs/TaxTab';
 
 import { useOrders } from '../hooks/useOrdersLive';
+import { useActivityLog } from '../hooks/useActivityLog';
 import { EmptyState } from './financial_tabs/SharedFinComponents';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, CartesianGrid, ReferenceLine, AreaChart, Area, Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from 'recharts';
 import { Settings, CheckCircle2, AlertCircle, Info as InfoIcon, Trash, Bell } from 'lucide-react';
@@ -163,8 +164,49 @@ const NsmCard = ({ label, value, delta, statusStr, limitStr, statusColor }) => {
 const MorningBriefingBlock = ({ orders }) => {
   const [userName] = useState("Hakan Bey");
   
-  // Pseudo logic for headline and nsms based on orders
-  const rev = Math.round((orders || []).slice(0,30).reduce((s, o) => s + (o.revenue || 0), 0) * 15);
+  const metrics = useMemo(() => {
+    const now = new Date();
+    const currentStart = new Date(now);
+    currentStart.setDate(now.getDate() - 30);
+    const previousStart = new Date(currentStart);
+    previousStart.setDate(currentStart.getDate() - 30);
+
+    let currRev = 0, currProfit = 0, prevRev = 0, prevProfit = 0;
+    let fulfilledOrders = 0, totalCurrentOrders = 0;
+    
+    (orders || []).forEach(o => {
+      const orderDate = new Date(o.dateRaw);
+      const rev = o.revenue || 0;
+      const profit = o.profit || 0;
+      
+      if (orderDate >= currentStart && orderDate <= now) {
+        currRev += rev;
+        currProfit += profit;
+        totalCurrentOrders++;
+        if (o.statusObj && o.statusObj.label !== 'İptal' && o.statusObj.label !== 'İade') {
+          fulfilledOrders++;
+        }
+      } else if (orderDate >= previousStart && orderDate < currentStart) {
+        prevRev += rev;
+        prevProfit += profit;
+      }
+    });
+
+    const currMargin = currRev > 0 ? (currProfit / currRev) * 100 : 0;
+    const prevMargin = prevRev > 0 ? (prevProfit / prevRev) * 100 : 0;
+    const marginDelta = currMargin - prevMargin;
+    
+    const sla = totalCurrentOrders > 0 ? (fulfilledOrders / totalCurrentOrders) * 100 : 0;
+
+    return {
+      rev: currRev,
+      margin: currMargin,
+      marginDelta,
+      sla
+    };
+  }, [orders]);
+  
+  const formatNum = (v) => new Intl.NumberFormat('tr-TR').format(Math.round(v));
   
   return (
     <div className="bg-white p-6 rounded-xl border border-[#EDEDF0] shadow-sm flex flex-col xl:flex-row gap-6">
@@ -173,7 +215,7 @@ const MorningBriefingBlock = ({ orders }) => {
            ☀️ Günaydın {userName} — dün ciro tarafında hedefler aşıldı ancak kârlılıkta kritik uyarılar var.
          </h2>
          <p className="text-[13px] text-[#7D7DA6] leading-relaxed mb-4">
-           Son hesaplamalara göre ciro <b>₺{new Intl.NumberFormat('tr-TR').format(rev)}</b> seviyesinde tamamlandı. Net kâr marjı hedefinizin (%25) <b>2.7 puan</b> altında seyrediyor. Stok ve kargo SLA düşüşleri var.
+           Son 30 güne göre ciro <b>₺{formatNum(metrics.rev)}</b> seviyesinde. Net kâr marjınız (%{metrics.margin.toFixed(1)}) hedefinizin (%25) altında seyrediyor. Stok ve kargo SLA uyarılarını kontrol edin.
          </p>
          <button className="mt-auto self-start px-4 py-2 bg-[#FAFAFB] text-[#0F1223] text-xs font-semibold rounded-lg hover:bg-slate-100 transition-colors border border-[#EDEDF0]">
            Gilan Raporunu Dinle
@@ -183,11 +225,11 @@ const MorningBriefingBlock = ({ orders }) => {
       <div className="flex-[2] grid grid-cols-2 lg:grid-cols-4 gap-4">
          <NsmCard 
             label="Net Kâr Marjı" 
-            value="%22.3" 
-            delta="↑ +1.2 MoM" 
-            statusColor="text-rose-500" 
+            value={`%${metrics.margin.toFixed(1)}`} 
+            delta={`${metrics.marginDelta >= 0 ? '↑' : '↓'} ${metrics.marginDelta > 0 ? '+' : ''}${metrics.marginDelta.toFixed(1)} MoM`} 
+            statusColor={metrics.marginDelta >= 0 ? "text-emerald-500" : "text-rose-500"} 
             limitStr="Hedef 25%" 
-            statusStr="2.7 Puan Altında"
+            statusStr={metrics.margin < 25 ? `${(25 - metrics.margin).toFixed(1)} Puan Altında` : "Hedefin Üzerinde"}
          />
          <NsmCard 
             label="Nakit Runway" 
@@ -205,9 +247,9 @@ const MorningBriefingBlock = ({ orders }) => {
          />
          <NsmCard 
             label="Kargo SLA" 
-            value="%89" 
-            delta="↓ -5 puan" 
-            statusColor="text-rose-500" 
+            value={`%${metrics.sla.toFixed(0)}`} 
+            delta={metrics.sla < 95 ? "↓ Riskli" : "↑ İyi"} 
+            statusColor={metrics.sla >= 95 ? "text-emerald-500" : "text-rose-500"} 
             limitStr="Hedef 95%" 
          />
       </div>
@@ -215,18 +257,10 @@ const MorningBriefingBlock = ({ orders }) => {
   );
 };
 
-const ActionInbox = ({ timePeriod }) => {
+const ActionInbox = ({ inboxActions, dismissInboxAction }) => {
   const [activeTab, setActiveTab] = useState('tumu');
 
-  const items = [
-    { id: 1, prio: 'critical', type: 'Fiyat', title: 'Rakip A, 3 ürünümüzde ₺18-34 daha ucuz — tahmini kayıp ₺42K/ay', btn: 'Fiyatı Revize Et' },
-    { id: 2, prio: 'critical', type: 'Stok', title: '"Filter Coffee XL" 4 günde tükenecek, tedarik süresi 14 gün', btn: 'Sipariş Oluştur' },
-    { id: 3, prio: 'important', type: 'Müşteri', title: '"Champion" segmentinden 42 kişi son 60 gündür sipariş vermedi', btn: 'Win-back Başlat' },
-    { id: 4, prio: 'important', type: 'Kampanya', title: '"Yılbaşı VIP20" kupon dağılımında ROAS 1.8\'e geriledi (Hedef 2.5)', btn: 'Duraklat' },
-    { id: 5, prio: 'info', type: 'Bilgi', title: 'Dün YTD ciro hedefi %104 seviyesine ulaşarak tamamlandı 🎯', btn: 'Detaylı İncele' },
-  ];
-
-  const filtered = activeTab === 'tumu' ? items : items.filter(i => i.prio === activeTab);
+  const filtered = activeTab === 'tumu' ? inboxActions : inboxActions.filter(i => i.prio === activeTab);
 
   return (
     <div className="w-full flex flex-col bg-white border border-[#EDEDF0] rounded-xl hover:border-[#B4B4C8] shadow-sm overflow-hidden h-[450px]">
@@ -234,7 +268,7 @@ const ActionInbox = ({ timePeriod }) => {
         <div className="flex justify-between items-end">
            <div>
               <h3 className="text-base font-bold text-[#0F1223] flex items-center gap-2">
-                 Inbox <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[11px] flex items-center justify-center font-bold">{items.length}</span>
+                 Inbox <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[11px] flex items-center justify-center font-bold">{inboxActions.length}</span>
               </h3>
               <p className="text-[12px] text-[#7D7DA6] mt-0.5">AI önem sırasına göre bekleyen aksiyonlar.</p>
            </div>
@@ -277,11 +311,17 @@ const ActionInbox = ({ timePeriod }) => {
                    <button className="px-4 py-2 bg-[#514BEE] hover:bg-[#3A35B8] text-white text-[11px] font-bold rounded-lg transition-colors shadow-sm">
                      {item.btn}
                    </button>
-                   <button className="text-[11px] font-semibold text-[#7D7DA6] px-3 py-2 bg-[#FAFAFB] border border-[#EDEDF0] hover:bg-slate-100 rounded-lg">Yoksay</button>
+                   <button onClick={() => dismissInboxAction?.(item.id)} className="text-[11px] font-semibold text-[#7D7DA6] px-3 py-2 bg-[#FAFAFB] border border-[#EDEDF0] hover:bg-slate-100 rounded-lg">Yoksay</button>
                 </div>
              </div>
            );
         })}
+        {filtered.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full text-[#7D7DA6] space-y-2">
+            <CheckCircle2 size={32} className="text-[#B4B4C8]" />
+            <p className="text-sm">Bekleyen aksiyon bulunmuyor.</p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -289,24 +329,32 @@ const ActionInbox = ({ timePeriod }) => {
 
 const HealthRadarBlock = ({ orders }) => {
    const scores = useMemo(() => {
-     let rev = 0, cost = 0, fulfilled = 0;
+     let rev = 0, cost = 0, fulfilled = 0, returns = 0, total = 0;
      (orders || []).forEach(o => {
        rev += o.revenue || 0;
        cost += o.cost || 0;
-       if (o.statusObj && o.statusObj.label !== 'İptal') fulfilled++;
+       total++;
+       if (o.statusObj && (o.statusObj.label === 'İptal' || o.statusObj.label === 'İade')) {
+         returns++;
+       } else {
+         fulfilled++;
+       }
      });
      
      const profitMargin = rev > 0 ? ((rev - cost) / rev) * 100 : 0;
-     const financial = Math.min(100, Math.max(0, (profitMargin / 40) * 100));
+     const financial = Math.min(100, Math.max(0, (profitMargin / 40) * 100)); // 40% margin = 100 score
      const commercial = Math.min(100, (rev / 100000) * 100); 
-     const operation = (orders && orders.length > 0) ? (fulfilled / orders.length) * 100 : 0;
+     const operation = total > 0 ? (fulfilled / total) * 100 : 0;
+     const returnRate = total > 0 ? (returns / total) : 0;
+     const customer = Math.max(0, 100 - (returnRate * 500)); // 20% return rate = 0 score
+     const strategic = Math.min(100, Math.max(0, (financial + commercial + operation + customer) / 4)); // average of others
 
      return [
-       { subject: 'Finansal', A: Math.round(financial || 82), fullMark: 100, status: '🟢', delta: '+3 MoM' },
-       { subject: 'Ticari', A: Math.round(commercial || 76), fullMark: 100, status: '🟢', delta: '→ Yatay' },
-       { subject: 'Müşteri', A: 71, fullMark: 100, status: '🟡', delta: '+1 MoM' },
-       { subject: 'Operasyon', A: Math.round(operation || 54), fullMark: 100, status: '🔴', delta: '-6 MoM' },
-       { subject: 'Stratejik', A: 68, fullMark: 100, status: '🟡', delta: '+2 MoM' }
+       { subject: 'Finansal', A: Math.round(financial || 82), fullMark: 100 },
+       { subject: 'Ticari', A: Math.round(commercial || 76), fullMark: 100 },
+       { subject: 'Müşteri', A: Math.round(customer || 71), fullMark: 100 },
+       { subject: 'Operasyon', A: Math.round(operation || 54), fullMark: 100 },
+       { subject: 'Stratejik', A: Math.round(strategic || 68), fullMark: 100 }
      ];
    }, [orders]);
 
@@ -409,42 +457,101 @@ const ChangeCard = ({ label, value, deltaStr, direction, sparklineData, format =
 };
 
 const WeeklyChangesGrid = ({ orders, timePeriod }) => {
-  // Mock fallback if specific period mapping is complex for now, we just use orders proxy
-  const safeOrders = orders || [];
-  
-  // Calculate mock changes based on period
-  const revenues = safeOrders.slice(0, 30).map(o => (o.revenue || 0) * (Math.random() * 0.5 + 0.8));
-  const latestRev = revenues.length > 0 ? revenues[0] : 0;
+  const metrics = useMemo(() => {
+    const now = new Date();
+    const currentStart = new Date(now);
+    currentStart.setDate(now.getDate() - 30);
+    const prevStart = new Date(currentStart);
+    prevStart.setDate(currentStart.getDate() - 30);
+
+    let currRev = 0, currProfit = 0, prevRev = 0, prevProfit = 0;
+    const currCustomers = new Set();
+    const prevCustomers = new Set();
+    
+    // For sparkline (last 10 days of revenue and margin)
+    const dailyData = {};
+    for (let i = 0; i < 10; i++) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const key = d.toISOString().split('T')[0];
+      dailyData[key] = { rev: 0, profit: 0, customers: new Set() };
+    }
+
+    (orders || []).forEach(o => {
+      const d = new Date(o.dateRaw);
+      const rev = o.revenue || 0;
+      const profit = o.profit || 0;
+      const cId = o.customerId || o.id;
+
+      if (d >= currentStart && d <= now) {
+        currRev += rev;
+        currProfit += profit;
+        currCustomers.add(cId);
+      } else if (d >= prevStart && d < currentStart) {
+        prevRev += rev;
+        prevProfit += profit;
+        prevCustomers.add(cId);
+      }
+
+      const key = d.toISOString().split('T')[0];
+      if (dailyData[key]) {
+        dailyData[key].rev += rev;
+        dailyData[key].profit += profit;
+        dailyData[key].customers.add(cId);
+      }
+    });
+
+    const currMargin = currRev > 0 ? (currProfit / currRev) * 100 : 0;
+    const prevMargin = prevRev > 0 ? (prevProfit / prevRev) * 100 : 0;
+    
+    const revDeltaPct = prevRev > 0 ? ((currRev - prevRev) / prevRev) * 100 : 0;
+    const marginDelta = currMargin - prevMargin;
+    const customerDelta = currCustomers.size - prevCustomers.size;
+
+    // Sparklines arrays (chronological: oldest to newest)
+    const daysArr = Object.keys(dailyData).sort();
+    const revSpark = daysArr.map(k => dailyData[k].rev);
+    const marginSpark = daysArr.map(k => dailyData[k].rev > 0 ? (dailyData[k].profit / dailyData[k].rev) * 100 : 0);
+    const customerSpark = daysArr.map(k => dailyData[k].customers.size);
+
+    return {
+      currRev, revDeltaPct, revSpark,
+      currMargin, marginDelta, marginSpark,
+      currCustomers: currCustomers.size, customerDelta, customerSpark
+    };
+  }, [orders]);
+
+  const formatNum = (v) => new Intl.NumberFormat('tr-TR').format(Math.round(v));
   
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
       <ChangeCard 
-        label="Ciro" 
-        value={`₺${new Intl.NumberFormat('tr-TR').format(Math.round(latestRev * 15))}`} 
-        deltaStr="↑ +8%" 
-        direction="up" 
-        sparklineData={revenues.slice(0,10).reverse()} 
+        label="Ciro (30g)" 
+        value={`₺${formatNum(metrics.currRev)}`} 
+        deltaStr={`${metrics.revDeltaPct >= 0 ? '↑' : '↓'} ${metrics.revDeltaPct > 0 ? '+' : ''}%${Math.abs(metrics.revDeltaPct).toFixed(1)}`} 
+        direction={metrics.revDeltaPct >= 0 ? 'up' : 'down'} 
+        sparklineData={metrics.revSpark} 
       />
       <ChangeCard 
-        label="Marj" 
-        value="%22.3" 
-        deltaStr="→ %0" 
-        direction="flat" 
-        sparklineData={[22.3, 22.1, 22.4, 22.3, 22.3, 22.3]} 
+        label="Marj (30g)" 
+        value={`%${metrics.currMargin.toFixed(1)}`} 
+        deltaStr={`${metrics.marginDelta >= 0 ? '↑' : '↓'} ${metrics.marginDelta > 0 ? '+' : ''}${Math.abs(metrics.marginDelta).toFixed(1)}p`} 
+        direction={Math.abs(metrics.marginDelta) < 0.5 ? 'flat' : metrics.marginDelta > 0 ? 'up' : 'down'} 
+        sparklineData={metrics.marginSpark} 
       />
       <ChangeCard 
-        label="Aktif Müşteri" 
-        value="1,847" 
-        deltaStr="↑ +118" 
-        direction="up" 
-        sparklineData={[1200, 1300, 1400, 1600, 1750, 1847]} 
+        label="Aktif Müşteri (30g)" 
+        value={formatNum(metrics.currCustomers)} 
+        deltaStr={`${metrics.customerDelta >= 0 ? '↑' : '↓'} ${metrics.customerDelta > 0 ? '+' : ''}${Math.abs(metrics.customerDelta)}`} 
+        direction={metrics.customerDelta >= 0 ? 'up' : 'down'} 
+        sparklineData={metrics.customerSpark} 
       />
       <ChangeCard 
         label="Stok Döner Hızı" 
         value="4.2x" 
-        deltaStr="↓ -0.4" 
-        direction="down" 
-        sparklineData={[4.8, 4.6, 4.5, 4.3, 4.2]} 
+        deltaStr="→ Yatay" 
+        direction="flat" 
+        sparklineData={[4.2, 4.2, 4.1, 4.2, 4.2]} 
       />
     </div>
   );
@@ -489,13 +596,48 @@ const AskGilanBlock = ({ timePeriod }) => {
   );
 };
 
-const PinnedMetricChart = () => {
-   // Mock 90 day anomaly data since algorithms depend on historical deep series
-   const data = useMemo(() => Array.from({length: 90}).map((_, i) => ({
-      date: `G-${90-i}`,
-      value: Math.round(50000 + Math.random() * 20000 + (Math.sin(i/10) * 10000)),
-      isAnomaly: i === 45 || i === 78
-   })), []);
+const PinnedMetricChart = ({ orders }) => {
+   const data = useMemo(() => {
+     const now = new Date();
+     const start = new Date(now);
+     start.setDate(now.getDate() - 90);
+
+     // Initialize 90 days array
+     const dailyProfit = {};
+     for (let i = 89; i >= 0; i--) {
+       const d = new Date(now);
+       d.setDate(d.getDate() - i);
+       const dateStr = d.toLocaleDateString('tr-TR', { day: '2-digit', month: 'short' });
+       const fullDate = d.toISOString().split('T')[0];
+       dailyProfit[fullDate] = { date: dateStr, value: 0, isAnomaly: false };
+     }
+
+     (orders || []).forEach(o => {
+       const d = new Date(o.dateRaw);
+       if (d >= start && d <= now) {
+         const fullDate = d.toISOString().split('T')[0];
+         if (dailyProfit[fullDate]) {
+           dailyProfit[fullDate].value += (o.profit || 0);
+         }
+       }
+     });
+
+     const dataArr = Object.values(dailyProfit);
+     
+     // Simple anomaly detection (negative profit or huge drop)
+     dataArr.forEach((d, i) => {
+       if (d.value < 0) {
+         d.isAnomaly = true;
+       } else if (i > 0 && dataArr[i-1].value > 0) {
+         const drop = (dataArr[i-1].value - d.value) / dataArr[i-1].value;
+         if (drop > 0.8) {
+           d.isAnomaly = true;
+         }
+       }
+     });
+
+     return dataArr;
+   }, [orders]);
 
    return (
      <div className="w-full h-full flex flex-col border border-[#EDEDF0] rounded-xl hover:border-[#B4B4C8] shadow-sm bg-white overflow-hidden p-5 transition-colors">
@@ -623,7 +765,7 @@ const SubTabChipBar = ({ items, activeId, onChange }) => {
 
 // --- VIEWS ---
 
-const SecondarySidebar = ({ isCollapsed, setCollapsed, navigateSubTab }) => {
+const SecondarySidebar = ({ isCollapsed, setCollapsed, navigateSubTab, timelineEvents = [] }) => {
   if (isCollapsed) {
     return (
       <div className="w-[50px] shrink-0 border-l border-[#EDEDF0] bg-white flex flex-col items-center py-4 space-y-4">
@@ -684,14 +826,9 @@ const SecondarySidebar = ({ isCollapsed, setCollapsed, navigateSubTab }) => {
             <Activity size={16} className="text-[#7D7DA6]" /> Timeline
          </h3>
          <div className="space-y-4">
-           {[
-             { title: 'Murat not ekledi', time: 'Dün 15:42' },
-             { title: 'AI uyarı üretti', time: 'Dün 14:10' },
-             { title: 'Haftalık PDF iletildi', time: 'Pzt 09:05' },
-             { title: 'RFM güncellendi', time: '3 gün önce' }
-           ].map((t, i) => (
-             <div key={i} className="flex relative items-start gap-3">
-               {i !== 3 && <div className="absolute top-4 left-1.5 w-0.5 h-full bg-[#EDEDF0] z-0" />}
+           {timelineEvents.map((t, i) => (
+             <div key={t.id || i} className="flex relative items-start gap-3">
+               {i !== timelineEvents.length - 1 && <div className="absolute top-4 left-1.5 w-0.5 h-full bg-[#EDEDF0] z-0" />}
                <div className="w-3 h-3 rounded-full bg-[#E0DDFF] border-2 border-white z-10 shrink-0 mt-1" />
                <div className="flex flex-col">
                  <span className="text-[13px] font-medium text-[#0F1223]">{t.title}</span>
@@ -699,6 +836,9 @@ const SecondarySidebar = ({ isCollapsed, setCollapsed, navigateSubTab }) => {
                </div>
              </div>
            ))}
+           {timelineEvents.length === 0 && (
+             <div className="text-[11px] text-[#7D7DA6] text-center mt-2">Henüz işlem yok.</div>
+           )}
          </div>
        </div>
 
@@ -719,6 +859,7 @@ const SecondarySidebar = ({ isCollapsed, setCollapsed, navigateSubTab }) => {
 const HomeView = ({ navigateSubTab, timePeriod }) => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { orders, loading: isLoading } = useOrders();
+  const { timelineEvents, inboxActions, dismissInboxAction } = useActivityLog(orders);
 
   return (
     <div className="p-6 md:p-8 animate-in fade-in duration-300 w-full h-full flex items-start">
@@ -747,7 +888,7 @@ const HomeView = ({ navigateSubTab, timePeriod }) => {
               <HomeErrorBoundary>
                 <div className="md:col-span-2 h-[350px]">
                   <ProgressiveLoader isLoading={isLoading} skeleton={<div className="w-full h-full bg-white rounded-xl border border-[#EDEDF0] animate-pulse"></div>}>
-                    <PinnedMetricChart />
+                    <PinnedMetricChart orders={orders} />
                   </ProgressiveLoader>
                 </div>
               </HomeErrorBoundary>
@@ -756,7 +897,7 @@ const HomeView = ({ navigateSubTab, timePeriod }) => {
            <HomeErrorBoundary>
              <div className="h-auto">
                 <ProgressiveLoader isLoading={isLoading} skeleton={<div className="w-full h-[400px] bg-white rounded-xl border border-[#EDEDF0] animate-pulse"></div>}>
-                  <ActionInbox timePeriod={timePeriod} />
+                  <ActionInbox inboxActions={inboxActions} dismissInboxAction={dismissInboxAction} />
                 </ProgressiveLoader>
              </div>
            </HomeErrorBoundary>
@@ -778,7 +919,7 @@ const HomeView = ({ navigateSubTab, timePeriod }) => {
 
         {/* SAĞ SIDEBAR (280px or 50px) */}
         <div className="hidden lg:block shrink-0">
-           <SecondarySidebar isCollapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} navigateSubTab={navigateSubTab} />
+           <SecondarySidebar isCollapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} navigateSubTab={navigateSubTab} timelineEvents={timelineEvents} />
         </div>
 
       </div>
