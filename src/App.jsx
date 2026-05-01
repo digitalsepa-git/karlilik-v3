@@ -234,6 +234,7 @@ function App() {
           onNavigate={handleNavigation}
           filters={dashboardFilters}
           onFilterChange={(key, val) => setDashboardFilters(prev => ({ ...prev, [key]: val }))}
+          disableGlobalFilters={activeTab === 'whatif'}
         />
 
         <div className="flex flex-1 overflow-hidden relative">

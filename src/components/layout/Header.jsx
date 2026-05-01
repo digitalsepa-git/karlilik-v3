@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Bell, Search, User, Menu, Globe, Sparkles, Calendar, ChevronDown, X, WifiOff, TrendingDown, PackageOpen, FileText, LogOut, Settings, Building, Users, CreditCard, Moon, Sun, ChevronRight, ShoppingBag } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
-export function Header({ toggleSidebar, language, setLanguage, t, isChatOpen, toggleChat, onNavigate, filters, onFilterChange }) {
+export function Header({ toggleSidebar, language, setLanguage, t, isChatOpen, toggleChat, onNavigate, filters, onFilterChange, disableGlobalFilters }) {
     const [isDateMenuOpen, setIsDateMenuOpen] = useState(false);
     const [isDateModalOpen, setIsDateModalOpen] = useState(false);
     const [startDate, setStartDate] = useState('');
@@ -153,7 +153,7 @@ export function Header({ toggleSidebar, language, setLanguage, t, isChatOpen, to
                 >
                     <Menu className="h-6 w-6" />
                 </button>
-                <div className="flex items-center gap-4 ml-4 h-10">
+                <div className={cn("flex items-center gap-4 ml-4 h-10 transition-opacity", disableGlobalFilters && "opacity-40 pointer-events-none select-none")}>
 
                     <div className="flex items-center gap-2 px-3 h-full bg-white border border-slate-200 rounded-lg hover:border-slate-300 transition-colors cursor-pointer group">
                         <svg className="w-4 h-4 text-slate-400 group-hover:text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
@@ -161,73 +161,76 @@ export function Header({ toggleSidebar, language, setLanguage, t, isChatOpen, to
                         <select
                             value={filters?.dateRange?.startsWith('custom:') ? filters.dateRange : (filters?.dateRange || 'last30')}
                             onChange={(e) => handleDateSelect(e.target.value)}
+                            disabled={disableGlobalFilters}
                             className="text-xs font-semibold text-slate-700 bg-transparent border-none focus:ring-0 p-0 cursor-pointer outline-none bg-none appearance-none"
                             style={{ backgroundImage: 'none', paddingRight: 0 }}
                         >
-                            <option value="last30">{t.header.last30Days}</option>
-                            <option value="thisMonth">{t.header.thisMonth}</option>
-                            <option value="lastQuarter">{t.header.lastQuarter}</option>
-                            <option value="thisYear">{t.header.thisYear}</option>
-                            
-                            {/* If a custom date is active, show the formatted string, else just "Custom Range..." */}
-                            {filters?.dateRange?.startsWith('custom:') ? (
-                                <option value={filters.dateRange}>
-                                    {new Date(filters.dateRange.split(':')[1]).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })} - {new Date(filters.dateRange.split(':')[2]).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })}
-                                </option>
-                            ) : (
-                                <option value="custom">{t.header.customRange || 'Özel Aralık...'}</option>
-                            )}
-                            
-                            {/* Always allow them to open the modal again via this option even if a custom date is active */}
-                            {filters?.dateRange?.startsWith('custom:') && (
-                                <option value="custom">Özel Aralık Seç...</option>
-                            )}
-                        </select>
+                                <option value="last30">{t.header.last30Days}</option>
+                                <option value="thisMonth">{t.header.thisMonth}</option>
+                                <option value="lastQuarter">{t.header.lastQuarter}</option>
+                                <option value="thisYear">{t.header.thisYear}</option>
+                                
+                                {/* If a custom date is active, show the formatted string, else just "Custom Range..." */}
+                                {filters?.dateRange?.startsWith('custom:') ? (
+                                    <option value={filters.dateRange}>
+                                        {new Date(filters.dateRange.split(':')[1]).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })} - {new Date(filters.dateRange.split(':')[2]).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })}
+                                    </option>
+                                ) : (
+                                    <option value="custom">{t.header.customRange || 'Özel Aralık...'}</option>
+                                )}
+                                
+                                {/* Always allow them to open the modal again via this option even if a custom date is active */}
+                                {filters?.dateRange?.startsWith('custom:') && (
+                                    <option value="custom">Özel Aralık Seç...</option>
+                                )}
+                            </select>
+                        </div>
+
+                        <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
+
+                        <div className="flex items-center gap-2 px-3 h-full bg-white border border-slate-200 rounded-lg hover:border-indigo-300 hover:shadow-sm transition-all cursor-pointer group">
+                            <svg className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>
+
+                            <span className="text-xs font-medium text-slate-500 hidden xl:inline">Kategori:</span>
+
+                            <select
+                                value={filters?.category || selectedCategory}
+                                onChange={handleCategoryChange}
+                                disabled={disableGlobalFilters}
+                                className="text-xs font-semibold text-slate-700 bg-transparent border-none focus:ring-0 p-0 cursor-pointer outline-none min-w-[120px] group-hover:text-indigo-700 bg-none appearance-none"
+                                style={{ backgroundImage: 'none', paddingRight: 0 }}
+                            >
+                                <option value="all">Tüm Kategoriler</option>
+                                <option value="Cihazlar">Cihazlar</option>
+                                <option value="Kozmetik Ürünler">Kozmetik Ürünler</option>
+                                <option value="Setler">Setler</option>
+                                <option value="Aksesuar">Aksesuar</option>
+                                <option value="Hello Kitty">Hello Kitty</option>
+                                <option value="Diğer">Diğer</option>
+                            </select>
+                        </div>
+
+                        <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
+
+                        <div className="flex items-center gap-2 px-3 h-full bg-white border border-slate-200 rounded-lg hover:border-indigo-300 hover:shadow-sm transition-all cursor-pointer group">
+                            <ShoppingBag className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 transition-colors" />
+
+                            <span className="text-xs font-medium text-slate-500 hidden xl:inline">Kanal:</span>
+
+                            <select
+                                value={filters?.channel || selectedChannel}
+                                onChange={handleChannelChange}
+                                disabled={disableGlobalFilters}
+                                className="text-xs font-semibold text-slate-700 bg-transparent border-none focus:ring-0 p-0 cursor-pointer outline-none min-w-[120px] group-hover:text-indigo-700 bg-none appearance-none"
+                                style={{ backgroundImage: 'none', paddingRight: 0 }}
+                            >
+                                <option value="all">Tüm Kanallar</option>
+                                <option value="Trendyol">Trendyol</option>
+                                <option value="Web">Web Sitesi (İkas)</option>
+                            </select>
+                        </div>
+
                     </div>
-
-                    <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
-
-                    <div className="flex items-center gap-2 px-3 h-full bg-white border border-slate-200 rounded-lg hover:border-indigo-300 hover:shadow-sm transition-all cursor-pointer group">
-                        <svg className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>
-
-                        <span className="text-xs font-medium text-slate-500 hidden xl:inline">Kategori:</span>
-
-                        <select
-                            value={filters?.category || selectedCategory}
-                            onChange={handleCategoryChange}
-                            className="text-xs font-semibold text-slate-700 bg-transparent border-none focus:ring-0 p-0 cursor-pointer outline-none min-w-[120px] group-hover:text-indigo-700 bg-none appearance-none"
-                            style={{ backgroundImage: 'none', paddingRight: 0 }}
-                        >
-                            <option value="all">Tüm Kategoriler</option>
-                            <option value="Cihazlar">Cihazlar</option>
-                            <option value="Kozmetik Ürünler">Kozmetik Ürünler</option>
-                            <option value="Setler">Setler</option>
-                            <option value="Aksesuar">Aksesuar</option>
-                            <option value="Hello Kitty">Hello Kitty</option>
-                            <option value="Diğer">Diğer</option>
-                        </select>
-                    </div>
-
-                    <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
-
-                    <div className="flex items-center gap-2 px-3 h-full bg-white border border-slate-200 rounded-lg hover:border-indigo-300 hover:shadow-sm transition-all cursor-pointer group">
-                        <ShoppingBag className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 transition-colors" />
-
-                        <span className="text-xs font-medium text-slate-500 hidden xl:inline">Kanal:</span>
-
-                        <select
-                            value={filters?.channel || selectedChannel}
-                            onChange={handleChannelChange}
-                            className="text-xs font-semibold text-slate-700 bg-transparent border-none focus:ring-0 p-0 cursor-pointer outline-none min-w-[120px] group-hover:text-indigo-700 bg-none appearance-none"
-                            style={{ backgroundImage: 'none', paddingRight: 0 }}
-                        >
-                            <option value="all">Tüm Kanallar</option>
-                            <option value="Trendyol">Trendyol</option>
-                            <option value="Web">Web Sitesi (İkas)</option>
-                        </select>
-                    </div>
-
-                </div>
             </div>
 
             <div className="flex items-center gap-4">
