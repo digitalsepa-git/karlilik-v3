@@ -30,17 +30,24 @@ export function SearchableProductSelect({ products, value, onChange }) {
 
   const handleSelect = (p) => {
     // Map product data to whatif format
-    const sku = p.variants?.[0]?.sku || "DEFAULT";
-    const price = p.variants?.[0]?.prices?.[0]?.sellPrice || 0;
+    const variant = p.variants?.[0];
+    const sku = variant?.sku || "DEFAULT";
+    const price = variant?.prices?.[0]?.sellPrice || p.price || 0;
     const costData = productCosts[sku] || productCosts["DEFAULT"] || { cogs: 360, shipping: 45 };
     const cost = costData.cogs + costData.shipping;
+    const image = p.image || p.img || (p.images && p.images[0] ? (p.images[0].url || p.images[0]) : null);
+    const stock = variant?.stockQuantity ?? p.stockQuantity ?? 0;
+    const variantName = variant?.variantValue ?? variant?.name ?? null;
 
     onChange({
       id: p.id,
       name: p.name,
       price: price,
       cost: cost,
-      sku: sku
+      sku: sku,
+      image: image,
+      stock: stock,
+      variantName: variantName
     });
     setIsOpen(false);
     setSearchTerm('');

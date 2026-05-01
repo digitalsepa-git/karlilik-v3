@@ -24,7 +24,7 @@ export function ModuleTabs() {
             key={m.id}
             onClick={() => setActiveModule(m.id)}
             className={cn(
-              "px-5 py-3.5 flex items-center gap-2.5 border-b-2 transition font-medium whitespace-nowrap",
+              "px-5 py-3.5 flex items-center gap-2.5 border-b-2 transition font-medium whitespace-nowrap text-sm",
               activeModule === m.id
                 ? "border-[#514BEE] text-[#514BEE] font-bold"
                 : "border-transparent text-[#7D7DA6] hover:text-[#0F1223] hover:border-gray-200"

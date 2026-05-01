@@ -5,7 +5,8 @@ import { SearchableProductSelect } from './components/SearchableProductSelect';
 
 export function ContextPicker() {
   const { selectedProduct, selectedChannel, setProduct, setChannel, loadDefaults } = useWhatifStore();
-  const { productsData } = useData();
+  const { productsData, ordersData, analyticsData } = useData();
+  const gaData = analyticsData?.data;
   const products = productsData?.products || [];
   
   return (
@@ -23,9 +24,10 @@ export function ContextPicker() {
         <span className="text-sm font-bold text-[#7D7DA6] uppercase tracking-wider">Kanal:</span>
         <select 
           className="border border-[#EDEDF0] rounded-lg p-2.5 text-sm font-medium focus:outline-none focus:border-[#514BEE] min-w-[150px] bg-white cursor-pointer"
-          value={selectedChannel}
+          value={selectedChannel || ""}
           onChange={e => setChannel(e.target.value)}
         >
+          <option value="" disabled>Kanal seçiniz...</option>
           <option value="trendyol">Trendyol</option>
           <option value="ikas">Web Sitesi (İkas)</option>
         </select>
@@ -34,11 +36,11 @@ export function ContextPicker() {
       <div className="flex-1" />
       
       <button 
-        onClick={() => loadDefaults(ordersData?.orders || [])} 
-        disabled={!selectedProduct}
+        onClick={() => loadDefaults(ordersData?.orders || [], gaData)} 
+        disabled={!selectedProduct || !selectedChannel}
         className="text-white bg-[#514BEE] text-sm font-bold hover:bg-[#3d38ca] px-4 py-2.5 rounded-lg transition disabled:opacity-50 disabled:bg-[#B4B4C8] shadow-sm flex items-center gap-2"
       >
-        Mevcut Verilerle Doldur
+        Uygula
       </button>
     </div>
   );

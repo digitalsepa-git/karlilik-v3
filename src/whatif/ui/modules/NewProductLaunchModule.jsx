@@ -54,14 +54,14 @@ export function NewProductLaunchModule() {
               
               <div className="relative z-10">
                 <div className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">ÖNERİLEN LANSMAN FİYATI</div>
-                <div className="text-5xl lg:text-6xl font-bold tracking-tight mb-8 text-white">
+                <div className="text-3xl lg:text-4xl font-bold tracking-tight mb-6 text-white">
                   {output.optimalPrice ? `₺ ${output.optimalPrice.toLocaleString("tr-TR", {maximumFractionDigits: 0})}` : "—"}
                 </div>
                 
                 <div className="grid grid-cols-2 gap-4 border-t border-white/10 pt-8">
                   <div>
                     <div className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">Net Kâr (Per Sipariş)</div>
-                    <div className="text-2xl font-semibold text-emerald-400">
+                    <div className="text-xl font-semibold text-emerald-400">
                       ₺ {output.netProfit.toLocaleString("tr-TR", {maximumFractionDigits: 0})}
                     </div>
                   </div>

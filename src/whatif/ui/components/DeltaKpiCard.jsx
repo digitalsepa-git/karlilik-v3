@@ -4,9 +4,9 @@ import { cn } from '../../../lib/utils';
 
 export function DeltaKpiCard({ label, value, previousValue, format, size = "medium" }) {
   const sizeClass = {
-    huge: "text-4xl md:text-5xl py-6",
-    medium: "text-2xl md:text-3xl py-4",
-    small: "text-xl py-2",
+    huge: "text-3xl py-4",
+    medium: "text-2xl py-2",
+    small: "text-xl py-1",
   }[size];
   
   const delta = previousValue !== undefined ? value - previousValue : null;
